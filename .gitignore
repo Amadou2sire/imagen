@@ -1,0 +1,20 @@
+# General
+.DS_Store
+.env
+
+# Backend
+backend/data.json
+backend/__pycache__/
+backend/venv/
+backend/corniche_images/
+backend/*.jpg
+backend/*.jpeg
+backend/*.png
+backend/*.webp
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Requested
+template.html
