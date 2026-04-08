@@ -10,6 +10,7 @@ from pathlib import Path
 import unicodedata
 import time
 from urllib.parse import quote_plus, urljoin
+import zipfile
 
 app = FastAPI(title="Image Matcher API")
 
@@ -1020,4 +1021,85 @@ async def export_multisite_csv():
         path=str(csv_path),
         media_type="text/csv",
         filename="multisite_candidates.csv",
+    )
+
+
+@app.get("/api/multisite-search/export-top-images-zip")
+async def export_multisite_top_images_zip():
+    ms = state["multi_site"]
+    if not ms.get("results"):
+        return JSONResponse(status_code=400, content={"error": "Aucun résultat multi-site disponible"})
+
+    zip_path = Path("export_multisite_top_images.zip")
+    used_names = {}
+    downloaded = 0
+
+    def infer_ext(image_url: str, content_type: str) -> str:
+        ext = Path(image_url.split("?")[0]).suffix.lower()
+        allowed = {".jpg", ".jpeg", ".png", ".webp", ".gif"}
+        if ext in allowed:
+            return ".jpg" if ext == ".jpeg" else ext
+
+        ct = (content_type or "").lower()
+        if "png" in ct:
+            return ".png"
+        if "webp" in ct:
+            return ".webp"
+        if "gif" in ct:
+            return ".gif"
+        return ".jpg"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; ImageMatcher/2.0; +https://localhost)",
+    }
+
+    async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=25) as client:
+        with zipfile.ZipFile(zip_path, "w", compression=zipfile.ZIP_DEFLATED) as zip_file:
+            for item in ms["results"]:
+                product = item.get("product", {})
+                product_name = product.get("name") or "produit"
+
+                candidates = item.get("candidates", [])
+                candidates_sorted = sorted(
+                    candidates,
+                    key=lambda c: (c.get("has_image", False), c.get("aggregated_score", 0), c.get("raw_score", 0)),
+                    reverse=True,
+                )
+                best = next((c for c in candidates_sorted if c.get("image_url")), None)
+                if not best:
+                    continue
+
+                image_url = best.get("image_url")
+                if not image_url:
+                    continue
+
+                try:
+                    resp = await client.get(image_url)
+                    if resp.status_code != 200 or not resp.content:
+                        continue
+
+                    ext = infer_ext(image_url, resp.headers.get("content-type", ""))
+                    base_name = safe_filename(product_name, "") or "produit"
+
+                    if base_name in used_names:
+                        used_names[base_name] += 1
+                        final_name = f"{base_name}_{used_names[base_name]}{ext}"
+                    else:
+                        used_names[base_name] = 1
+                        final_name = f"{base_name}{ext}"
+
+                    zip_file.writestr(final_name, resp.content)
+                    downloaded += 1
+
+                except Exception as e:
+                    print(f"Erreur ZIP image {image_url}: {e}")
+                    continue
+
+    if downloaded == 0:
+        return JSONResponse(status_code=400, content={"error": "Aucune image téléchargeable trouvée"})
+
+    return FileResponse(
+        path=str(zip_path),
+        media_type="application/zip",
+        filename="top_images_lacave.zip",
     )

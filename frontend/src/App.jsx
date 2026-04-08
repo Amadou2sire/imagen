@@ -306,6 +306,14 @@ export default function App() {
     window.open(`${API}/api/multisite-search/export-csv`, "_blank")
   }
 
+  const handleDownloadTopImagesZip = () => {
+    if (!multiResults.length) {
+      showToast("Veuillez d'abord lancer la recherche multi-sites", "error")
+      return
+    }
+    window.open(`${API}/api/multisite-search/export-top-images-zip`, "_blank")
+  }
+
   const filteredMulti = multiResults.filter(item => {
     const productName = (item.product?.name || "").toLowerCase()
     if (search && !productName.includes(search.toLowerCase())) return false
@@ -375,12 +383,20 @@ export default function App() {
           </span>
           <div className="flex items-center gap-4">
             {stats && (
-              <button
-                onClick={handleExport}
-                className="bg-transparent border-1 border-[#c9a84c] text-[#c9a84c] text-[11px] tracking-[0.1em] uppercase p-[9px_20px] rounded-[2px] cursor-pointer transition-all hover:bg-[#c9a84c] hover:text-[#0d0c0b] disabled:opacity-30 font-mono"
-              >
-                ↓ EXPORTER CSV
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={handleExport}
+                  className="bg-transparent border-1 border-[#c9a84c] text-[#c9a84c] text-[11px] tracking-[0.1em] uppercase p-[9px_16px] rounded-[2px] cursor-pointer transition-all hover:bg-[#c9a84c] hover:text-[#0d0c0b] disabled:opacity-30 font-mono"
+                >
+                  ↓ EXPORTER CSV
+                </button>
+                <button
+                  onClick={handleDownloadTopImagesZip}
+                  className="bg-transparent border-1 border-[#4a9e6a] text-[#4a9e6a] text-[11px] tracking-[0.1em] uppercase p-[9px_16px] rounded-[2px] cursor-pointer transition-all hover:bg-[#4a9e6a] hover:text-[#0d0c0b] disabled:opacity-30 font-mono"
+                >
+                  ↓ ZIP TOP IMAGES
+                </button>
+              </div>
             )}
             <div className="flex items-center gap-1.5 text-[10px] text-[#5a5248] tracking-[0.1em] font-mono">
               <div className={`w-1.5 h-1.5 rounded-full ${fakeScrapeStatus === 'done' ? 'bg-[#4a9e6a]' : (fakeScrapeStatus === 'running' || multiStatus === 'running') ? 'bg-[#c9a84c]' : 'bg-[#2a2520]'}`} />
