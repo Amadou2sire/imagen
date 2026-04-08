@@ -8,6 +8,8 @@ from rapidfuzz import fuzz, process
 import os, re, csv, asyncio, aiofiles, json
 from pathlib import Path
 import unicodedata
+import time
+from urllib.parse import quote_plus, urljoin
 
 app = FastAPI(title="Image Matcher API")
 
@@ -25,6 +27,7 @@ app.mount("/corniche_images", StaticFiles(directory=str(IMAGES_DIR)), name="corn
 FAKE_IMAGE_URL = "https://www.la-cave-privee.com/assets/img/no-image.gif"
 CAVE_BASE = "https://www.la-cave-privee.com"
 CAVE_CATEGORIES = ["vins-importes", "spiritueux-importes", "vins-locaux", "champagnes", "vins-effervescents"]
+FAKE_SCRAPE_CONCURRENCY = 5
 DATA_FILE = "data.json"
 
 # ─── Stockage et Persistance ────────────────────────────────────────────────
@@ -35,7 +38,22 @@ state = {
     "fake_scrape_status": "idle",
     "fake_scrape_count": 0,
     "scrape_status": "idle",
-    "match_status": "idle"
+    "match_status": "idle",
+    "multi_site": {
+        "status": "idle",
+        "run_id": None,
+        "started_at": None,
+        "finished_at": None,
+        "progress": {
+            "total_products": 0,
+            "processed_products": 0,
+            "with_candidates": 0,
+            "early_stopped": 0,
+        },
+        "options": {},
+        "site_errors": {},
+        "results": [],
+    }
 }
 
 def save_state():
@@ -110,71 +128,85 @@ async def _scrape_fake_products_task():
     state["fake_scrape_count"] = 0
     fake_products = []
     seen_urls = set() # Pour éviter les doublons entre catégories
+    state_lock = asyncio.Lock()
+    category_sem = asyncio.Semaphore(FAKE_SCRAPE_CONCURRENCY)
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
-    
-    async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=30) as client:
-        for cat_name in CAVE_CATEGORIES:
-            page = 1
-            while True:
-                # URL structure: https://www.la-cave-privee.com/fr/{category}/products?page={page}
-                url = f"{CAVE_BASE}/fr/{cat_name}/products?page={page}"
-                try:
+
+    async def scrape_one_category(client: httpx.AsyncClient, cat_name: str):
+        page = 1
+        while True:
+            # URL structure: https://www.la-cave-privee.com/fr/{category}/products?page={page}
+            url = f"{CAVE_BASE}/fr/{cat_name}/products?page={page}"
+            try:
+                async with category_sem:
                     resp = await client.get(url)
-                    if resp.status_code != 200:
-                        break
-                    soup = BeautifulSoup(resp.text, "lxml")
-                    
-                    # Sélecteurs basés sur l'HTML fourni par l'utilisateur
-                    products = soup.select(".item")
-                    if not products:
-                        break
-                    
-                    # On évite les boucles infinies de pagination si le site renvoie toujours la même page
-                    if page > 100: break 
-                    
-                    for p in products:
-                        img_tag = p.select_one(".img_pdt img")
-                        name_tag = p.select_one(".titre_pdt")
-                        link_tag = p.select_one(".img_pdt a")
-                        
-                        if not img_tag or not name_tag:
-                            continue
-                        
-                        product_name = name_tag.get_text(strip=True)
-                        product_url = link_tag["href"] if link_tag else ""
-                        
-                        # Déduplication
-                        if product_url in seen_urls:
-                            continue
-                        
-                        # Déduction de la catégorie via l'URL (sm=...)
-                        category = "unknown"
-                        if "sm=" in product_url:
-                            category = product_url.split("sm=")[-1].split("&")[0]
-                        elif cat_name:
-                            category = cat_name
-                        
-                        img_src = img_tag.get("src", "") or img_tag.get("data-src", "")
-                        
-                        # Extraction des images "fake"
-                        # Le site semble utiliser : assets/img/no-image.gif
-                        if "no-image.gif" in img_src:
-                            fake_products.append({
-                                "id": len(fake_products) + 1,
-                                "name": product_name,
-                                "category": category,
-                                "url": product_url if product_url.startswith("http") else CAVE_BASE + product_url,
-                                "fake_img_url": img_src if img_src.startswith("http") else CAVE_BASE + img_src,
-                            })
-                            seen_urls.add(product_url)
-                            state["fake_scrape_count"] = len(fake_products)
-                    
-                    page += 1
-                    await asyncio.sleep(0.3)  # politeness delay
-                    
-                except Exception as e:
-                    print(f"Erreur catégorie {cat_name} page {page}: {e}")
+
+                if resp.status_code != 200:
                     break
+
+                soup = BeautifulSoup(resp.text, "lxml")
+
+                # Sélecteurs basés sur l'HTML fourni par l'utilisateur
+                products = soup.select(".item")
+                if not products:
+                    break
+
+                # On évite les boucles infinies de pagination si le site renvoie toujours la même page
+                if page > 100:
+                    break
+
+                for p in products:
+                    img_tag = p.select_one(".img_pdt img")
+                    name_tag = p.select_one(".titre_pdt")
+                    link_tag = p.select_one(".img_pdt a")
+
+                    if not img_tag or not name_tag:
+                        continue
+
+                    product_name = name_tag.get_text(strip=True)
+                    product_url = link_tag["href"] if link_tag else ""
+
+                    # Déduction de la catégorie via l'URL (sm=...)
+                    category = "unknown"
+                    if "sm=" in product_url:
+                        category = product_url.split("sm=")[-1].split("&")[0]
+                    elif cat_name:
+                        category = cat_name
+
+                    img_src = img_tag.get("src", "") or img_tag.get("data-src", "")
+
+                    # Extraction des images "fake"
+                    # Le site semble utiliser : assets/img/no-image.gif
+                    if "no-image.gif" not in img_src:
+                        continue
+
+                    full_product_url = product_url if product_url.startswith("http") else CAVE_BASE + product_url
+                    full_fake_img_url = img_src if img_src.startswith("http") else CAVE_BASE + img_src
+
+                    async with state_lock:
+                        # Déduplication partagée entre catégories concurrentes
+                        if full_product_url in seen_urls:
+                            continue
+                        seen_urls.add(full_product_url)
+
+                        fake_products.append({
+                            "id": len(fake_products) + 1,
+                            "name": product_name,
+                            "category": category,
+                            "url": full_product_url,
+                            "fake_img_url": full_fake_img_url,
+                        })
+                        state["fake_scrape_count"] = len(fake_products)
+
+                page += 1
+                await asyncio.sleep(0.3)  # politeness delay
+
+            except Exception as e:
+                print(f"Erreur catégorie {cat_name} page {page}: {e}")
+                break
+
+    async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=30) as client:
+        await asyncio.gather(*(scrape_one_category(client, cat_name) for cat_name in CAVE_CATEGORIES))
     
     state["fake_products"] = fake_products
     state["fake_scrape_status"] = "done"
@@ -302,7 +334,8 @@ async def scrape_corniche(background_tasks: BackgroundTasks):
 async def get_scrape_status():
     return {
         "status": state["scrape_status"],
-        "count": len(state["corniche_images"])
+        "count": len(state["corniche_images"]),
+        "images_count": len(state["corniche_images"]),
     }
 
 
@@ -441,4 +474,550 @@ async def export_csv():
         path=str(csv_path),
         media_type="text/csv",
         filename="image_matches.csv",
+    )
+
+
+# ─── Multi-site Async Search (Verbose) ──────────────────────────────────────
+
+SITE_CONNECTORS = {
+    "ceptunes.com": {
+        "base": "https://ceptunes.com",
+        "search_paths": [
+            "/?s={q}",
+            "/search?q={q}",
+        ],
+    },
+    "boissonsdumonde.fr": {
+        "base": "https://boissonsdumonde.fr",
+        "search_paths": [
+            "/?s={q}",
+            "/search?q={q}",
+            "/catalogsearch/result/?q={q}",
+        ],
+    },
+    "my-alco-shop.com": {
+        "base": "https://my-alco-shop.com",
+        "search_paths": [
+            "/?s={q}",
+            "/search?q={q}",
+            "/boutique/?s={q}",
+        ],
+    },
+    "geantdrive.tn": {
+        "base": "https://geantdrive.tn",
+        "search_paths": [
+            "/?s={q}",
+            "/search?q={q}",
+        ],
+    },
+    "boissonlacorniche.com": {
+        "base": "https://boissonlacorniche.com",
+        "search_paths": [
+            "/?s={q}",
+            "/search/{q}",
+            "/boutique/?s={q}",
+        ],
+    },
+}
+
+PRODUCT_CARD_SELECTORS = [
+    "li.product",
+    ".product",
+    ".product-item",
+    "article.product",
+    ".products .item",
+    ".grid-product__content",
+]
+
+LINK_SELECTORS = [
+    "a.woocommerce-LoopProduct-link",
+    "a.product-item-link",
+    "a[href]",
+]
+
+NAME_SELECTORS = [
+    ".woocommerce-loop-product__title",
+    ".product-title",
+    "h2",
+    "h3",
+    "a[title]",
+]
+
+IMAGE_SELECTORS = [
+    "img.wp-post-image",
+    "img.product-image-photo",
+    "img.attachment-woocommerce_thumbnail",
+    "img",
+]
+
+
+def _build_query_variants(product_name: str):
+    variants = []
+    base = product_name.strip()
+    norm = normalize_name(product_name)
+    no_year = re.sub(r"\b(19\d{2}|20[0-2]\d|2030)\b", " ", base)
+    no_year = re.sub(r"\s+", " ", no_year).strip()
+
+    for value in [base, no_year, norm]:
+        if value and value not in variants:
+            variants.append(value)
+
+    return variants[:3]
+
+
+def _safe_text(node):
+    if not node:
+        return ""
+    return node.get_text(" ", strip=True)
+
+
+def _extract_candidates_from_html(site_name: str, base_url: str, html: str, source_url: str, query_text: str, product: dict):
+    soup = BeautifulSoup(html, "lxml")
+    product_norm = normalize_name(product.get("name", ""))
+    candidates = []
+    seen = set()
+
+    cards = []
+    for sel in PRODUCT_CARD_SELECTORS:
+        cards = soup.select(sel)
+        if cards:
+            break
+
+    if not cards:
+        cards = soup.select("a[href]")
+
+    for card in cards:
+        link_node = None
+        for sel in LINK_SELECTORS:
+            link_node = card.select_one(sel)
+            if link_node:
+                break
+
+        name_node = None
+        for sel in NAME_SELECTORS:
+            name_node = card.select_one(sel)
+            if name_node:
+                break
+
+        img_node = None
+        for sel in IMAGE_SELECTORS:
+            img_node = card.select_one(sel)
+            if img_node:
+                break
+
+        href = ""
+        if link_node:
+            href = link_node.get("href", "")
+        elif card.name == "a":
+            href = card.get("href", "")
+
+        page_url = urljoin(base_url, href) if href else source_url
+        found_name = _safe_text(name_node) or _safe_text(link_node) or _safe_text(card)
+        found_name = found_name[:220]
+
+        if not found_name:
+            continue
+
+        img_url = ""
+        if img_node:
+            img_url = (
+                img_node.get("src")
+                or img_node.get("data-src")
+                or img_node.get("data-lazy-src")
+                or img_node.get("data-original")
+                or ""
+            )
+            img_url = urljoin(base_url, img_url) if img_url else ""
+
+        if "placeholder" in img_url or "no-image" in img_url:
+            img_url = ""
+
+        norm_found = normalize_name(found_name)
+        raw_score = fuzz.token_set_ratio(product_norm, norm_found) if norm_found else 0
+
+        dedup_key = (page_url, img_url, found_name)
+        if dedup_key in seen:
+            continue
+        seen.add(dedup_key)
+
+        candidates.append({
+            "site": site_name,
+            "query": query_text,
+            "search_url": source_url,
+            "page_url": page_url,
+            "image_url": img_url,
+            "found_name": found_name,
+            "found_name_normalized": norm_found,
+            "raw_score": round(float(raw_score), 2),
+            "detected_via": "html_selectors",
+            "has_image": bool(img_url),
+        })
+
+    return candidates
+
+
+def _compute_aggregated_score(product: dict, candidate: dict):
+    base = float(candidate.get("raw_score", 0.0))
+    score = base
+    reasons = []
+
+    cave_name = product.get("name", "")
+    cave_cat = product.get("category", "")
+    found_name = candidate.get("found_name", "")
+
+    year_cave = extract_year(cave_name)
+    year_found = extract_year(found_name)
+    if year_cave and year_found:
+        if year_cave == year_found:
+            score += 10
+            reasons.append("year_match:+10")
+        else:
+            score -= 15
+            reasons.append("year_conflict:-15")
+
+    is_cave_wine = "vin" in cave_cat or "champagne" in cave_cat
+    is_found_spirit = any(tag in found_name.lower() for tag in SPIRIT_TAGS)
+    if is_cave_wine and is_found_spirit:
+        score -= 10
+        reasons.append("wine_vs_spirit_mismatch:-10")
+
+    if candidate.get("has_image"):
+        score += 5
+        reasons.append("has_image:+5")
+
+    score = max(0, min(100, score))
+    return round(score, 2), reasons
+
+
+async def _site_search_for_product(
+    client: httpx.AsyncClient,
+    http_sem: asyncio.Semaphore,
+    site_name: str,
+    site_conf: dict,
+    product: dict,
+    min_raw_score: int,
+    max_results_per_site: int,
+):
+    variants = _build_query_variants(product.get("name", ""))
+    all_candidates = []
+    errors = []
+
+    for query in variants:
+        q = quote_plus(query)
+        for path_tpl in site_conf.get("search_paths", []):
+            search_url = site_conf["base"] + path_tpl.format(q=q)
+            try:
+                async with http_sem:
+                    resp = await client.get(search_url, timeout=18)
+                if resp.status_code != 200:
+                    continue
+
+                candidates = _extract_candidates_from_html(
+                    site_name=site_name,
+                    base_url=site_conf["base"],
+                    html=resp.text,
+                    source_url=search_url,
+                    query_text=query,
+                    product=product,
+                )
+                if candidates:
+                    all_candidates.extend(candidates)
+
+            except Exception as exc:
+                errors.append(f"{search_url} -> {exc}")
+
+    filtered = [c for c in all_candidates if c.get("raw_score", 0) >= min_raw_score]
+    filtered.sort(key=lambda x: (x.get("has_image", False), x.get("raw_score", 0)), reverse=True)
+    return filtered[:max_results_per_site], errors
+
+
+async def _search_product_across_sites(
+    client: httpx.AsyncClient,
+    http_sem: asyncio.Semaphore,
+    product: dict,
+    min_raw_score: int,
+    max_results_per_site: int,
+    stop_after_two_sites: bool,
+):
+    start = time.time()
+
+    tasks = {
+        site_name: asyncio.create_task(
+            _site_search_for_product(
+                client=client,
+                http_sem=http_sem,
+                site_name=site_name,
+                site_conf=site_conf,
+                product=product,
+                min_raw_score=min_raw_score,
+                max_results_per_site=max_results_per_site,
+            )
+        )
+        for site_name, site_conf in SITE_CONNECTORS.items()
+    }
+
+    results = []
+    site_errors = {}
+    sites_with_images = set()
+    stop_reason = "completed_all_sites"
+
+    pending = set(tasks.values())
+    while pending:
+        done, pending = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
+        for completed in done:
+            site_name = next((k for k, v in tasks.items() if v is completed), "unknown")
+            try:
+                candidates, errors = await completed
+            except Exception as exc:
+                candidates, errors = [], [str(exc)]
+
+            if errors:
+                site_errors[site_name] = errors[:5]
+
+            for cand in candidates:
+                agg, reasons = _compute_aggregated_score(product, cand)
+                cand["aggregated_score"] = agg
+                cand["aggregated_reasons"] = reasons
+                results.append(cand)
+                if cand.get("has_image"):
+                    sites_with_images.add(cand.get("site"))
+
+            image_count = sum(1 for c in results if c.get("has_image"))
+            if stop_after_two_sites and len(sites_with_images) >= 2 and image_count >= 2:
+                stop_reason = "enough_cross_site_evidence"
+                for p in pending:
+                    p.cancel()
+                pending = set()
+                break
+
+    # Ignore cancellation exceptions from tasks stopped by early-stop condition.
+    await asyncio.gather(*tasks.values(), return_exceptions=True)
+
+    # Deduplicate and rank final candidates.
+    dedup = {}
+    for c in results:
+        key = (c.get("site"), c.get("page_url"), c.get("image_url"), c.get("found_name"))
+        prev = dedup.get(key)
+        if not prev or c.get("aggregated_score", 0) > prev.get("aggregated_score", 0):
+            dedup[key] = c
+
+    candidates = list(dedup.values())
+    candidates.sort(key=lambda x: (x.get("has_image", False), x.get("aggregated_score", 0), x.get("raw_score", 0)), reverse=True)
+
+    per_site = {}
+    for c in candidates:
+        per_site.setdefault(c["site"], 0)
+        per_site[c["site"]] += 1
+
+    return {
+        "product": {
+            "id": product.get("id"),
+            "name": product.get("name"),
+            "category": product.get("category"),
+            "source_url": product.get("url"),
+            "fake_img_url": product.get("fake_img_url"),
+            "normalized_name": normalize_name(product.get("name", "")),
+        },
+        "timing_ms": int((time.time() - start) * 1000),
+        "stop_reason": stop_reason,
+        "searched_sites": list(SITE_CONNECTORS.keys()),
+        "sites_with_images": sorted(list(sites_with_images)),
+        "candidates_count": len(candidates),
+        "per_site_counts": per_site,
+        "candidates": candidates,
+        "top_candidates": candidates[:3],
+        "site_errors": site_errors,
+    }
+
+
+async def _run_multisite_search_task(options: dict):
+    state["multi_site"] = {
+        "status": "running",
+        "run_id": f"run-{int(time.time())}",
+        "started_at": int(time.time()),
+        "finished_at": None,
+        "progress": {
+            "total_products": 0,
+            "processed_products": 0,
+            "with_candidates": 0,
+            "early_stopped": 0,
+        },
+        "options": options,
+        "site_errors": {},
+        "results": [],
+    }
+
+    if not state["fake_products"]:
+        state["multi_site"]["status"] = "error"
+        state["multi_site"]["finished_at"] = int(time.time())
+        state["multi_site"]["site_errors"] = {"global": ["Aucun produit fake disponible"]}
+        return
+
+    products = list(state["fake_products"])
+    max_products = options.get("max_products")
+    if max_products and max_products > 0:
+        products = products[:max_products]
+
+    state["multi_site"]["progress"]["total_products"] = len(products)
+
+    product_sem = asyncio.Semaphore(options["max_product_concurrency"])
+    http_sem = asyncio.Semaphore(options["max_http_concurrency"])
+    headers = {
+        "User-Agent": "Mozilla/5.0 (compatible; ImageMatcher/2.0; +https://localhost)",
+        "Accept-Language": "fr-FR,fr;q=0.9,en;q=0.8",
+    }
+
+    async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=20) as client:
+        async def process_one(product):
+            async with product_sem:
+                result = await _search_product_across_sites(
+                    client=client,
+                    http_sem=http_sem,
+                    product=product,
+                    min_raw_score=options["min_raw_score"],
+                    max_results_per_site=options["max_results_per_site"],
+                    stop_after_two_sites=options["stop_after_two_sites"],
+                )
+
+                state["multi_site"]["results"].append(result)
+                state["multi_site"]["progress"]["processed_products"] += 1
+                if result["candidates_count"] > 0:
+                    state["multi_site"]["progress"]["with_candidates"] += 1
+                if result["stop_reason"] == "enough_cross_site_evidence":
+                    state["multi_site"]["progress"]["early_stopped"] += 1
+
+                for site_name, errs in result["site_errors"].items():
+                    state["multi_site"]["site_errors"].setdefault(site_name, [])
+                    state["multi_site"]["site_errors"][site_name].extend(errs[:2])
+
+        await asyncio.gather(*(process_one(p) for p in products), return_exceptions=False)
+
+    state["multi_site"]["results"].sort(key=lambda item: item["product"].get("id", 0))
+    state["multi_site"]["status"] = "done"
+    state["multi_site"]["finished_at"] = int(time.time())
+
+
+@app.post("/api/multisite-search/start")
+async def start_multisite_search(
+    background_tasks: BackgroundTasks,
+    min_raw_score: int = 35,
+    max_results_per_site: int = 6,
+    max_product_concurrency: int = 5,
+    max_http_concurrency: int = 20,
+    max_products: int = 0,
+    stop_after_two_sites: bool = True,
+):
+    if state["multi_site"].get("status") == "running":
+        return {"status": "already_running", "run_id": state["multi_site"].get("run_id")}
+
+    options = {
+        "min_raw_score": max(0, min(100, min_raw_score)),
+        "max_results_per_site": max(1, min(20, max_results_per_site)),
+        "max_product_concurrency": max(1, min(30, max_product_concurrency)),
+        "max_http_concurrency": max(1, min(100, max_http_concurrency)),
+        "max_products": max_products if max_products > 0 else None,
+        "stop_after_two_sites": bool(stop_after_two_sites),
+    }
+    background_tasks.add_task(_run_multisite_search_task, options)
+    return {"status": "started", "options": options}
+
+
+@app.get("/api/multisite-search/status")
+async def get_multisite_status():
+    ms = state["multi_site"]
+    return {
+        "status": ms.get("status"),
+        "run_id": ms.get("run_id"),
+        "started_at": ms.get("started_at"),
+        "finished_at": ms.get("finished_at"),
+        "progress": ms.get("progress", {}),
+        "options": ms.get("options", {}),
+        "site_errors_count": {k: len(v) for k, v in ms.get("site_errors", {}).items()},
+        "results_count": len(ms.get("results", [])),
+    }
+
+
+@app.get("/api/multisite-search/results")
+async def get_multisite_results():
+    ms = state["multi_site"]
+    if ms.get("status") == "idle":
+        return JSONResponse(status_code=400, content={"error": "Lance d'abord /api/multisite-search/start"})
+
+    return {
+        "status": ms.get("status"),
+        "run_id": ms.get("run_id"),
+        "progress": ms.get("progress", {}),
+        "results": ms.get("results", []),
+        "site_errors": ms.get("site_errors", {}),
+    }
+
+
+@app.get("/api/multisite-search/export-csv")
+async def export_multisite_csv():
+    ms = state["multi_site"]
+    if not ms.get("results"):
+        return JSONResponse(status_code=400, content={"error": "Aucun résultat multi-site à exporter"})
+
+    csv_path = Path("export_multisite_candidates.csv")
+    with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
+        fieldnames = [
+            "ID Produit Cave",
+            "Nom Produit Cave",
+            "URL Produit Cave",
+            "Site",
+            "Nom Trouvé",
+            "URL Page Trouvée",
+            "URL Image",
+            "Requête",
+            "Score Brut",
+            "Score Agrégé",
+            "Raisons Agrégation",
+            "Stop Reason Produit",
+            "Durée Produit (ms)",
+        ]
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for item in ms["results"]:
+            product = item.get("product", {})
+            candidates = item.get("candidates", [])
+            if not candidates:
+                writer.writerow({
+                    "ID Produit Cave": product.get("id"),
+                    "Nom Produit Cave": product.get("name"),
+                    "URL Produit Cave": product.get("source_url"),
+                    "Site": "",
+                    "Nom Trouvé": "",
+                    "URL Page Trouvée": "",
+                    "URL Image": "",
+                    "Requête": "",
+                    "Score Brut": "",
+                    "Score Agrégé": "",
+                    "Raisons Agrégation": "",
+                    "Stop Reason Produit": item.get("stop_reason"),
+                    "Durée Produit (ms)": item.get("timing_ms"),
+                })
+                continue
+
+            for cand in candidates:
+                writer.writerow({
+                    "ID Produit Cave": product.get("id"),
+                    "Nom Produit Cave": product.get("name"),
+                    "URL Produit Cave": product.get("source_url"),
+                    "Site": cand.get("site"),
+                    "Nom Trouvé": cand.get("found_name"),
+                    "URL Page Trouvée": cand.get("page_url"),
+                    "URL Image": cand.get("image_url"),
+                    "Requête": cand.get("query"),
+                    "Score Brut": cand.get("raw_score"),
+                    "Score Agrégé": cand.get("aggregated_score"),
+                    "Raisons Agrégation": " | ".join(cand.get("aggregated_reasons", [])),
+                    "Stop Reason Produit": item.get("stop_reason"),
+                    "Durée Produit (ms)": item.get("timing_ms"),
+                })
+
+    return FileResponse(
+        path=str(csv_path),
+        media_type="text/csv",
+        filename="multisite_candidates.csv",
     )

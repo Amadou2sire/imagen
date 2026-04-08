@@ -118,6 +118,55 @@ function StepCard({ num, title, desc, statusEl, actionEl, done }) {
   )
 }
 
+function MultiSiteResultCard({ item }) {
+  const product = item.product || {}
+  const topCandidates = item.top_candidates || []
+
+  return (
+    <div className="bg-[#181614] border-1 border-[#2a2520] rounded-[3px] overflow-hidden">
+      <div className="p-[12px_14px] border-b-1 border-b-[#2a2520]">
+        <div className="text-[11px] text-[#e8dcc8] leading-[1.4]">{product.name}</div>
+        <div className="mt-1 flex items-center gap-2 text-[9px] text-[#5a5248] font-mono">
+          <span>ID #{product.id}</span>
+          <span>•</span>
+          <span>{item.candidates_count || 0} candidats</span>
+          <span>•</span>
+          <span>{item.timing_ms || 0} ms</span>
+        </div>
+      </div>
+
+      <div className="p-3.5 flex flex-col gap-2.5">
+        {topCandidates.length > 0 ? topCandidates.map((cand, idx) => (
+          <div key={`${cand.site}-${idx}`} className="bg-[#141210] border-1 border-[#2a2520] rounded-[2px] p-2.5">
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[9px] tracking-[0.1em] uppercase text-[#8a6c2a] font-mono">{cand.site}</div>
+              <div className="text-[10px] font-mono" style={{ color: scoreColor(cand.aggregated_score || 0) }}>
+                {cand.aggregated_score || 0}%
+              </div>
+            </div>
+            <div className="text-[10px] text-[#d4c9b8] mt-1 leading-[1.4]">{cand.found_name || "Nom indisponible"}</div>
+            <div className="mt-2 flex flex-wrap gap-3 text-[9px] font-mono">
+              {cand.page_url && (
+                <a href={cand.page_url} target="_blank" rel="noopener noreferrer" className="text-[#c9a84c] hover:text-[#e8dcc8]">
+                  page ↗
+                </a>
+              )}
+              {cand.image_url && (
+                <a href={cand.image_url} target="_blank" rel="noopener noreferrer" className="text-[#4a9e6a] hover:text-[#e8dcc8]">
+                  image ↗
+                </a>
+              )}
+              <span className="text-[#5a5248]">raw {cand.raw_score || 0}%</span>
+            </div>
+          </div>
+        )) : (
+          <div className="text-[10px] text-[#5a5248] font-mono">Aucun candidat trouvé</div>
+        )}
+      </div>
+    </div>
+  )
+}
+
 // ── Main App ─────────────────────────────────────────────────────────────────
 
 export default function App() {
@@ -131,9 +180,13 @@ export default function App() {
   const [threshold, setThreshold]         = useState(60)
   const [filter, setFilter]               = useState("all") // all | matched | unmatched
   const [search, setSearch]               = useState("")
-  const [loading, setLoading]             = useState({ fake: false, match: false })
+  const [loading, setLoading]             = useState({ fake: false, match: false, multi: false })
   const [toast, setToast]                 = useState(null)
   const [activeSection, setActiveSection] = useState("setup")
+  const [multiStatus, setMultiStatus]     = useState("idle")
+  const [multiProgress, setMultiProgress] = useState({ total_products: 0, processed_products: 0, with_candidates: 0, early_stopped: 0 })
+  const [multiResults, setMultiResults]   = useState([])
+  const [multiErrors, setMultiErrors]     = useState({})
 
   const showToast = (msg, type = "info") => setToast({ msg, type })
 
@@ -189,6 +242,43 @@ export default function App() {
     return () => clearInterval(iv)
   }, [scrapeStatus])
 
+  // Polling multisite search
+  useEffect(() => {
+    if (multiStatus !== "running") return
+    const iv = setInterval(async () => {
+      try {
+        const r = await fetch(`${API}/api/multisite-search/status`)
+        const d = await r.json()
+        setMultiStatus(d.status || "idle")
+        setMultiProgress(d.progress || { total_products: 0, processed_products: 0, with_candidates: 0, early_stopped: 0 })
+
+        if (d.status === "done") {
+          clearInterval(iv)
+          const rr = await fetch(`${API}/api/multisite-search/results`)
+          const rd = await rr.json()
+          setMultiResults(rd.results || [])
+          setMultiErrors(rd.site_errors || {})
+
+          const total = (rd.results || []).length
+          const withCand = (rd.results || []).filter(x => (x.candidates_count || 0) > 0).length
+          setStats({ total, matched: withCand, unmatched: Math.max(0, total - withCand) })
+          setActiveSection("results")
+          showToast(`Recherche multi-sites terminée : ${withCand}/${total} produits avec candidats`, "success")
+          setLoading(prev => ({ ...prev, multi: false }))
+        }
+
+        if (d.status === "error") {
+          clearInterval(iv)
+          setLoading(prev => ({ ...prev, multi: false }))
+          showToast("Erreur sur la recherche multi-sites", "error")
+        }
+      } catch (err) {
+        console.error("Polling multisite error:", err)
+      }
+    }, 2000)
+    return () => clearInterval(iv)
+  }, [multiStatus])
+
   const handleLoadFake = async () => {
     try {
       const r = await fetch(`${API}/api/fake-products`, { method: "POST" })
@@ -227,18 +317,56 @@ export default function App() {
     setLoading(prev => ({ ...prev, match: false }))
   }
 
+  const handleStartMultiSiteSearch = async () => {
+    setLoading(prev => ({ ...prev, multi: true }))
+    try {
+      const q = new URLSearchParams({
+        min_raw_score: String(Math.max(20, threshold - 25)),
+        max_results_per_site: "6",
+        max_product_concurrency: "5",
+        max_http_concurrency: "20",
+        stop_after_two_sites: "true",
+      })
+      const r = await fetch(`${API}/api/multisite-search/start?${q.toString()}`, { method: "POST" })
+      if (!r.ok) throw new Error()
+      const d = await r.json()
+      if (d.status === "already_running") {
+        setMultiStatus("running")
+        showToast("Une recherche multi-sites est déjà en cours", "info")
+      } else {
+        setMultiResults([])
+        setMultiErrors({})
+        setMultiProgress({ total_products: 0, processed_products: 0, with_candidates: 0, early_stopped: 0 })
+        setMultiStatus("running")
+        showToast("Recherche multi-sites démarrée…", "info")
+      }
+    } catch {
+      setLoading(prev => ({ ...prev, multi: false }))
+      showToast("Erreur lors du lancement de la recherche multi-sites", "error")
+    }
+  }
+
   const handleExport = () => {
-    if (!matches.length) {
+    if (!matches.length && !multiResults.length) {
       showToast("Veuillez d'abord lancer le matching", "error")
       return
     }
-    window.open(`${API}/api/export-csv`, "_blank")
+    const exportUrl = multiResults.length ? `${API}/api/multisite-search/export-csv` : `${API}/api/export-csv`
+    window.open(exportUrl, "_blank")
   }
 
   const filtered = matches.filter(m => {
     if (filter === "matched" && m.status !== "matched") return false
     if (filter === "unmatched" && m.status !== "no_match") return false
     if (search && !m.cave_product_name.toLowerCase().includes(search.toLowerCase())) return false
+    return true
+  })
+
+  const filteredMulti = multiResults.filter(item => {
+    const productName = (item.product?.name || "").toLowerCase()
+    if (search && !productName.includes(search.toLowerCase())) return false
+    if (filter === "matched" && (item.candidates_count || 0) <= 0) return false
+    if (filter === "unmatched" && (item.candidates_count || 0) > 0) return false
     return true
   })
 
@@ -255,8 +383,8 @@ export default function App() {
         {[
           { id: "setup",   num: "01", name: "Configuration", status: fakeScrapeStatus === "done" ? `${fakeScrapeCount} produits fake` : fakeScrapeStatus === "running" ? "En cours…" : "En attente" },
           { id: "scrape",  num: "02", name: "Scraping Corniche", status: scrapeStatus === "done" ? `${scrapeCount} images` : scrapeStatus === "running" ? "En cours…" : "En attente" },
-          { id: "match",   num: "03", name: "Matching & Seuil", status: matches.length ? `${matches.length} reliés` : "En attente" },
-          { id: "results", num: "04", name: "Rapports & CSV",  status: stats ? `${stats.matched}/${stats.total} matchés` : "—" },
+          { id: "match",   num: "03", name: "Recherche Multi-sites", status: multiStatus === "running" ? `${multiProgress.processed_products}/${multiProgress.total_products} en cours` : multiResults.length ? `${multiResults.length} traités` : "En attente" },
+          { id: "results", num: "04", name: "Rapports & CSV",  status: stats ? `${stats.matched}/${stats.total} avec candidats` : "—" },
         ].map(s => (
           <div
             key={s.id}
@@ -287,8 +415,8 @@ export default function App() {
           <span className="font-serif text-[15px] text-[#e8dcc8] italic">
             {activeSection === "setup"   && "Configuration & Chargement des données"}
             {activeSection === "scrape"  && "Scraping du catalogue Corniche"}
-            {activeSection === "match"   && "Algorithme de Matching Fuzzy"}
-            {activeSection === "results" && "Analyse des Correspondances"}
+            {activeSection === "match"   && "Recherche Multi-sites Asynchrone"}
+            {activeSection === "results" && "Analyse Verbose des Correspondances"}
           </span>
           <div className="flex items-center gap-4">
             {stats && (
@@ -395,11 +523,11 @@ export default function App() {
 
               <StepCard
                 num="3"
-                title="Matching par similarité textuelle"
-                desc="L'algorithme compare les noms des produits 'Cave Privée' avec ceux de 'Corniche'. Plus le seuil est élevé, plus le matching est strict. Un seuil de 65-70% est généralement idéal pour pallier les différences mineures de naming."
-                done={matches.length > 0}
-                statusEl={loading.match ? (
-                  <span className="text-[10px] text-[#c9a84c] font-mono animate-pulse">Calcul des similarités…</span>
+                title="Recherche d'images sur 5 sites (async)"
+                desc="Cette étape recherche uniquement les produits sans image sur plusieurs sites en parallèle. Faux positifs et résultats multiples sont autorisés, puis agrégés dans les résultats verbose. La recherche s'arrête tôt pour un produit dès que 2 images sont trouvées sur 2 sites différents."
+                done={multiResults.length > 0}
+                statusEl={loading.multi || multiStatus === "running" ? (
+                  <span className="text-[10px] text-[#c9a84c] font-mono animate-pulse">{multiProgress.processed_products}/{multiProgress.total_products || "?"} produits analysés…</span>
                 ) : null}
                 actionEl={
                   <div className="flex flex-col gap-6">
@@ -416,11 +544,11 @@ export default function App() {
                     </div>
                     <div>
                       <button
-                        onClick={handleMatch}
-                        disabled={loading.match || fakeProducts.length === 0 || scrapeStatus !== "done"}
+                        onClick={handleStartMultiSiteSearch}
+                        disabled={loading.multi || multiStatus === "running" || fakeProducts.length === 0}
                         className="bg-transparent border-1 border-[#c9a84c] text-[#c9a84c] text-[11px] tracking-[0.1em] uppercase p-[9px_20px] rounded-[2px] cursor-pointer transition-all hover:bg-[#c9a84c] hover:text-[#0d0c0b] disabled:opacity-30 disabled:cursor-not-allowed font-mono"
                       >
-                        {loading.match ? "Calcul en cours…" : "Exécuter le matching"}
+                        {loading.multi || multiStatus === "running" ? "Recherche en cours…" : "Lancer recherche multi-sites"}
                       </button>
                     </div>
                   </div>
@@ -445,7 +573,7 @@ export default function App() {
                   </div>
                   <div className="bg-[#181614] border-1 border-[#2a2520] rounded-[3px] p-5 flex flex-col gap-1">
                     <div className="font-serif text-3xl text-[#c9a84c]">{stats.matched}</div>
-                    <div className="text-[9px] tracking-[0.2em] uppercase text-[#5a5248] font-mono">Matchs Trouvés</div>
+                    <div className="text-[9px] tracking-[0.2em] uppercase text-[#5a5248] font-mono">Produits Avec Candidats</div>
                     <div className="text-[10px] text-[#8a6c2a] mt-1 font-mono">{Math.round(stats.matched/stats.total*100)}% de réussite</div>
                   </div>
                   <div className="bg-[#181614] border-1 border-[#2a2520] rounded-[3px] p-5 flex flex-col gap-1">
@@ -456,7 +584,7 @@ export default function App() {
               )}
 
               {/* Filters */}
-              {matches.length > 0 && (
+              {(matches.length > 0 || multiResults.length > 0) && (
                 <div className="flex flex-col md:flex-row justify-between items-center bg-[#141210] p-3 rounded-[3px] border-1 border-[#2a2520] gap-4">
                   <div className="flex gap-2">
                     {[
@@ -482,14 +610,20 @@ export default function App() {
                       className="bg-[#181614] border-1 border-[#2a2520] rounded-[2px] p-[8px_14px] font-mono text-[11px] text-[#d4c9b8] outline-none transition-colors focus:border-[#8a6c2a] w-full md:w-[280px]"
                     />
                     <div className="text-[9px] text-[#5a5248] tabular-nums font-mono whitespace-nowrap">
-                      {filtered.length} ÉLÉMENTS
+                      {multiResults.length ? filteredMulti.length : filtered.length} ÉLÉMENTS
                     </div>
                   </div>
                 </div>
               )}
 
               {/* Grid */}
-              {filtered.length > 0 ? (
+              {multiResults.length > 0 ? (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {filteredMulti.map((item) => (
+                    <MultiSiteResultCard key={item.product?.id} item={item} />
+                  ))}
+                </div>
+              ) : filtered.length > 0 ? (
                 <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
                   {filtered.map((m) => (
                     <MatchCard key={m.cave_product_id} match={m} />
@@ -501,11 +635,23 @@ export default function App() {
                   <div className="text-[10px] tracking-[0.1em] uppercase font-mono">Aucun résultat correspondant</div>
                 </div>
               )}
+              {multiResults.length > 0 && Object.keys(multiErrors).length > 0 && (
+                <div className="bg-[#141210] border-1 border-[#2a2520] rounded-[3px] p-4">
+                  <div className="text-[10px] tracking-[0.1em] uppercase text-[#c9a84c] font-mono mb-2">Erreurs collectées par site</div>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                    {Object.entries(multiErrors).map(([site, errs]) => (
+                      <div key={site} className="text-[10px] text-[#5a5248] font-mono bg-[#181614] border-1 border-[#2a2520] rounded-[2px] p-2">
+                        <span className="text-[#e8dcc8]">{site}</span> : {Array.isArray(errs) ? errs.length : 0}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
           {/* Empty Global State */}
-          {matches.length === 0 && !loading.match && activeSection === "results" && (
+          {matches.length === 0 && multiResults.length === 0 && !loading.match && !loading.multi && activeSection === "results" && (
             <div className="flex flex-col items-center justify-center py-32 text-center fade-up">
               <div className="w-20 h-20 bg-[#181614] rounded-full flex items-center justify-center mb-6 border-1 border-[#2a2520] text-3xl font-serif italic text-[#c9a84c] shadow-2xl pulse">
                 ?
