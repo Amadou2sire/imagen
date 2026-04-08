@@ -151,8 +151,16 @@ export default function App() {
           // On recharge les produits une fois fini
           const res = await fetch(`${API}/api/fake-products-get`)
           const data = await res.json()
-          setFakeProducts(data.products || [])
+          // Le backend renvoie directement la liste, on gère les deux cas par sécurité
+          const products = Array.isArray(data) ? data : (data.products || [])
+          setFakeProducts(products)
+          
           showToast(`Analyse terminée — ${d.count} produits sans image trouvés`, "success")
+          
+          // Activation automatique du Scraping Corniche si des produits ont été trouvés
+          if (products.length > 0) {
+            handleScrape()
+          }
         }
       } catch (err) {
         console.error("Polling error:", err)
