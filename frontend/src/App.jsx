@@ -275,8 +275,9 @@ export default function App() {
       const q = new URLSearchParams({
         min_raw_score: String(Math.max(20, threshold - 25)),
         max_results_per_site: "6",
-        max_product_concurrency: "5",
-        max_http_concurrency: "20",
+        max_product_concurrency: "8",
+        max_http_concurrency: "40",
+        max_site_query_concurrency: "6",
         stop_after_two_sites: "true",
       })
       const r = await fetch(`${API}/api/multisite-search/start?${q.toString()}`, { method: "POST" })

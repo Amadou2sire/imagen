@@ -698,34 +698,48 @@ async def _site_search_for_product(
     product: dict,
     min_raw_score: int,
     max_results_per_site: int,
+    max_site_query_concurrency: int,
 ):
     variants = _build_query_variants(product.get("name", ""))
     all_candidates = []
     errors = []
+    site_sem = asyncio.Semaphore(max_site_query_concurrency)
 
-    for query in variants:
+    async def fetch_search_page(query: str, path_tpl: str):
         q = quote_plus(query)
-        for path_tpl in site_conf.get("search_paths", []):
-            search_url = site_conf["base"] + path_tpl.format(q=q)
-            try:
+        search_url = site_conf["base"] + path_tpl.format(q=q)
+        try:
+            async with site_sem:
                 async with http_sem:
                     resp = await client.get(search_url, timeout=18)
-                if resp.status_code != 200:
-                    continue
+            if resp.status_code != 200:
+                return [], None
 
-                candidates = _extract_candidates_from_html(
-                    site_name=site_name,
-                    base_url=site_conf["base"],
-                    html=resp.text,
-                    source_url=search_url,
-                    query_text=query,
-                    product=product,
-                )
-                if candidates:
-                    all_candidates.extend(candidates)
+            candidates = _extract_candidates_from_html(
+                site_name=site_name,
+                base_url=site_conf["base"],
+                html=resp.text,
+                source_url=search_url,
+                query_text=query,
+                product=product,
+            )
+            return candidates, None
+        except Exception as exc:
+            return [], f"{search_url} -> {exc}"
 
-            except Exception as exc:
-                errors.append(f"{search_url} -> {exc}")
+    jobs = [
+        asyncio.create_task(fetch_search_page(query, path_tpl))
+        for query in variants
+        for path_tpl in site_conf.get("search_paths", [])
+    ]
+
+    for task in asyncio.as_completed(jobs):
+        candidates, err = await task
+        if err:
+            errors.append(err)
+            continue
+        if candidates:
+            all_candidates.extend(candidates)
 
     filtered = [c for c in all_candidates if c.get("raw_score", 0) >= min_raw_score]
     filtered.sort(key=lambda x: (x.get("has_image", False), x.get("raw_score", 0)), reverse=True)
@@ -739,6 +753,7 @@ async def _search_product_across_sites(
     min_raw_score: int,
     max_results_per_site: int,
     stop_after_two_sites: bool,
+    max_site_query_concurrency: int,
 ):
     start = time.time()
 
@@ -752,6 +767,7 @@ async def _search_product_across_sites(
                 product=product,
                 min_raw_score=min_raw_score,
                 max_results_per_site=max_results_per_site,
+                max_site_query_concurrency=max_site_query_concurrency,
             )
         )
         for site_name, site_conf in SITE_CONNECTORS.items()
@@ -861,7 +877,6 @@ async def _run_multisite_search_task(options: dict):
 
     state["multi_site"]["progress"]["total_products"] = len(products)
 
-    product_sem = asyncio.Semaphore(options["max_product_concurrency"])
     http_sem = asyncio.Semaphore(options["max_http_concurrency"])
     headers = {
         "User-Agent": "Mozilla/5.0 (compatible; ImageMatcher/2.0; +https://localhost)",
@@ -869,8 +884,17 @@ async def _run_multisite_search_task(options: dict):
     }
 
     async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=20) as client:
-        async def process_one(product):
-            async with product_sem:
+        queue = asyncio.Queue()
+        for product in products:
+            queue.put_nowait(product)
+
+        async def worker():
+            while True:
+                product = await queue.get()
+                if product is None:
+                    queue.task_done()
+                    break
+
                 result = await _search_product_across_sites(
                     client=client,
                     http_sem=http_sem,
@@ -878,6 +902,7 @@ async def _run_multisite_search_task(options: dict):
                     min_raw_score=options["min_raw_score"],
                     max_results_per_site=options["max_results_per_site"],
                     stop_after_two_sites=options["stop_after_two_sites"],
+                    max_site_query_concurrency=options["max_site_query_concurrency"],
                 )
 
                 state["multi_site"]["results"].append(result)
@@ -891,7 +916,17 @@ async def _run_multisite_search_task(options: dict):
                     state["multi_site"]["site_errors"].setdefault(site_name, [])
                     state["multi_site"]["site_errors"][site_name].extend(errs[:2])
 
-        await asyncio.gather(*(process_one(p) for p in products), return_exceptions=False)
+                queue.task_done()
+
+        workers = [
+            asyncio.create_task(worker())
+            for _ in range(options["max_product_concurrency"])
+        ]
+
+        await queue.join()
+        for _ in workers:
+            queue.put_nowait(None)
+        await asyncio.gather(*workers, return_exceptions=False)
 
     state["multi_site"]["results"].sort(key=lambda item: item["product"].get("id", 0))
     state["multi_site"]["status"] = "done"
@@ -903,8 +938,9 @@ async def start_multisite_search(
     background_tasks: BackgroundTasks,
     min_raw_score: int = 35,
     max_results_per_site: int = 6,
-    max_product_concurrency: int = 5,
-    max_http_concurrency: int = 20,
+    max_product_concurrency: int = 8,
+    max_http_concurrency: int = 40,
+    max_site_query_concurrency: int = 6,
     max_products: int = 0,
     stop_after_two_sites: bool = True,
 ):
@@ -916,6 +952,7 @@ async def start_multisite_search(
         "max_results_per_site": max(1, min(20, max_results_per_site)),
         "max_product_concurrency": max(1, min(30, max_product_concurrency)),
         "max_http_concurrency": max(1, min(100, max_http_concurrency)),
+        "max_site_query_concurrency": max(1, min(20, max_site_query_concurrency)),
         "max_products": max_products if max_products > 0 else None,
         "stop_after_two_sites": bool(stop_after_two_sites),
     }
