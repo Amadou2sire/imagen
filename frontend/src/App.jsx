@@ -1,6 +1,13 @@
 import React, { useState, useEffect } from 'react'
 
 const API = "http://localhost:8000"
+const TARGET_SITES = [
+  "ceptunes.com",
+  "boissonsdumonde.fr",
+  "my-alco-shop.com",
+  "geantdrive.tn",
+  "boissonlacorniche.com",
+]
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -173,14 +180,11 @@ export default function App() {
   const [fakeProducts, setFakeProducts]   = useState([])
   const [fakeScrapeStatus, setFakeScrapeStatus] = useState("idle")
   const [fakeScrapeCount, setFakeScrapeCount] = useState(0)
-  const [scrapeStatus, setScrapeStatus]   = useState("idle")
-  const [scrapeCount, setScrapeCount]     = useState(0)
-  const [matches, setMatches]             = useState([])
   const [stats, setStats]                 = useState(null)
   const [threshold, setThreshold]         = useState(60)
   const [filter, setFilter]               = useState("all") // all | matched | unmatched
   const [search, setSearch]               = useState("")
-  const [loading, setLoading]             = useState({ fake: false, match: false, multi: false })
+  const [loading, setLoading]             = useState({ fake: false, multi: false })
   const [toast, setToast]                 = useState(null)
   const [activeSection, setActiveSection] = useState("setup")
   const [multiStatus, setMultiStatus]     = useState("idle")
@@ -209,11 +213,6 @@ export default function App() {
           setFakeProducts(products)
           
           showToast(`Analyse terminée — ${d.count} produits sans image trouvés`, "success")
-          
-          // Activation automatique du Scraping Corniche si des produits ont été trouvés
-          if (products.length > 0) {
-            handleScrape()
-          }
         }
       } catch (err) {
         console.error("Polling error:", err)
@@ -221,26 +220,6 @@ export default function App() {
     }, 2000)
     return () => clearInterval(iv)
   }, [fakeScrapeStatus])
-
-  // Polling scrape corniche
-  useEffect(() => {
-    if (scrapeStatus !== "running") return
-    const iv = setInterval(async () => {
-      try {
-        const r = await fetch(`${API}/api/scrape-status`)
-        const d = await r.json()
-        setScrapeStatus(d.status)
-        setScrapeCount(d.images_count || 0)
-        if (d.status === "done") {
-          clearInterval(iv)
-          showToast(`Scraping terminé — ${d.images_count} images téléchargées`, "success")
-        }
-      } catch (err) {
-        console.error("Polling error:", err)
-      }
-    }, 2000)
-    return () => clearInterval(iv)
-  }, [scrapeStatus])
 
   // Polling multisite search
   useEffect(() => {
@@ -290,33 +269,6 @@ export default function App() {
     }
   }
 
-  const handleScrape = async () => {
-    try {
-      const r = await fetch(`${API}/api/scrape-corniche`, { method: "POST" })
-      if (!r.ok) throw new Error()
-      setScrapeStatus("running")
-      showToast("Scraping en cours en arrière-plan…", "info")
-    } catch {
-      showToast("Erreur lors du lancement du scraping", "error")
-    }
-  }
-
-  const handleMatch = async () => {
-    setLoading(prev => ({ ...prev, match: true }))
-    try {
-      const r = await fetch(`${API}/api/match?threshold=${threshold}`)
-      if (!r.ok) throw new Error()
-      const d = await r.json()
-      setMatches(d.matches || [])
-      setStats({ total: d.total, matched: d.matched, unmatched: d.unmatched })
-      setActiveSection("results")
-      showToast(`Matching terminé : ${d.matched}/${d.total} produits reliés`, "success")
-    } catch {
-      showToast("Erreur lors du matching", "error")
-    }
-    setLoading(prev => ({ ...prev, match: false }))
-  }
-
   const handleStartMultiSiteSearch = async () => {
     setLoading(prev => ({ ...prev, multi: true }))
     try {
@@ -347,20 +299,12 @@ export default function App() {
   }
 
   const handleExport = () => {
-    if (!matches.length && !multiResults.length) {
-      showToast("Veuillez d'abord lancer le matching", "error")
+    if (!multiResults.length) {
+      showToast("Veuillez d'abord lancer la recherche multi-sites", "error")
       return
     }
-    const exportUrl = multiResults.length ? `${API}/api/multisite-search/export-csv` : `${API}/api/export-csv`
-    window.open(exportUrl, "_blank")
+    window.open(`${API}/api/multisite-search/export-csv`, "_blank")
   }
-
-  const filtered = matches.filter(m => {
-    if (filter === "matched" && m.status !== "matched") return false
-    if (filter === "unmatched" && m.status !== "no_match") return false
-    if (search && !m.cave_product_name.toLowerCase().includes(search.toLowerCase())) return false
-    return true
-  })
 
   const filteredMulti = multiResults.filter(item => {
     const productName = (item.product?.name || "").toLowerCase()
@@ -368,6 +312,19 @@ export default function App() {
     if (filter === "matched" && (item.candidates_count || 0) <= 0) return false
     if (filter === "unmatched" && (item.candidates_count || 0) > 0) return false
     return true
+  })
+
+  const siteRows = TARGET_SITES.map(site => {
+    const foundProducts = multiResults.reduce((acc, item) => acc + ((item.per_site_counts?.[site] || 0) > 0 ? 1 : 0), 0)
+    const foundCandidates = multiResults.reduce((acc, item) => acc + (item.per_site_counts?.[site] || 0), 0)
+    const errorsCount = Array.isArray(multiErrors?.[site]) ? multiErrors[site].length : 0
+
+    let label = "en attente"
+    if (multiStatus === "running") label = "recherche…"
+    if (multiResults.length > 0) label = foundProducts > 0 ? "trouvé" : "rien trouvé"
+    if (errorsCount > 0 && foundProducts === 0) label = "avec erreurs"
+
+    return { site, foundProducts, foundCandidates, errorsCount, label }
   })
 
   return (
@@ -382,9 +339,8 @@ export default function App() {
 
         {[
           { id: "setup",   num: "01", name: "Configuration", status: fakeScrapeStatus === "done" ? `${fakeScrapeCount} produits fake` : fakeScrapeStatus === "running" ? "En cours…" : "En attente" },
-          { id: "scrape",  num: "02", name: "Scraping Corniche", status: scrapeStatus === "done" ? `${scrapeCount} images` : scrapeStatus === "running" ? "En cours…" : "En attente" },
-          { id: "match",   num: "03", name: "Recherche Multi-sites", status: multiStatus === "running" ? `${multiProgress.processed_products}/${multiProgress.total_products} en cours` : multiResults.length ? `${multiResults.length} traités` : "En attente" },
-          { id: "results", num: "04", name: "Rapports & CSV",  status: stats ? `${stats.matched}/${stats.total} avec candidats` : "—" },
+          { id: "match",   num: "02", name: "Recherche Multi-sites", status: multiStatus === "running" ? `${multiProgress.processed_products}/${multiProgress.total_products} en cours` : multiResults.length ? `${multiResults.length} traités` : "En attente" },
+          { id: "results", num: "03", name: "Rapports & CSV",  status: stats ? `${stats.matched}/${stats.total} avec candidats` : "—" },
         ].map(s => (
           <div
             key={s.id}
@@ -414,8 +370,7 @@ export default function App() {
         <div className="h-14 border-b-1 border-b-[#2a2520] flex items-center p-[0_32px] justify-between bg-[#141210] sticky top-0 z-50">
           <span className="font-serif text-[15px] text-[#e8dcc8] italic">
             {activeSection === "setup"   && "Configuration & Chargement des données"}
-            {activeSection === "scrape"  && "Scraping du catalogue Corniche"}
-            {activeSection === "match"   && "Recherche Multi-sites Asynchrone"}
+            {activeSection === "match"   && "Recherche Async Sur Sites Cibles"}
             {activeSection === "results" && "Analyse Verbose des Correspondances"}
           </span>
           <div className="flex items-center gap-4">
@@ -428,7 +383,7 @@ export default function App() {
               </button>
             )}
             <div className="flex items-center gap-1.5 text-[10px] text-[#5a5248] tracking-[0.1em] font-mono">
-              <div className={`w-1.5 h-1.5 rounded-full ${fakeScrapeStatus === 'done' ? 'bg-[#4a9e6a]' : (fakeScrapeStatus === 'running' || scrapeStatus === 'running') ? '#c9a84c' : 'bg-[#2a2520]'}`} />
+              <div className={`w-1.5 h-1.5 rounded-full ${fakeScrapeStatus === 'done' ? 'bg-[#4a9e6a]' : (fakeScrapeStatus === 'running' || multiStatus === 'running') ? 'bg-[#c9a84c]' : 'bg-[#2a2520]'}`} />
               {fakeScrapeStatus === 'done' ? "backend connecté" : "en attente…"}
             </div>
           </div>
@@ -475,54 +430,15 @@ export default function App() {
             </div>
           )}
 
-          {/* ───────────── SCRAPE ───────────── */}
-          {activeSection === "scrape" && (
-            <div className="flex flex-col gap-8 fade-up">
-              <div className="flex items-center gap-3 text-[#2a2520] text-[9px] tracking-[0.3em] uppercase after:content-[''] after:flex-1 after:h-[1px] after:bg-[#2a2520] font-mono">
-                Étape 02 — Collecte Corniche
-              </div>
-
-              <StepCard
-                num="2"
-                title="Extraction du catalogue d'images"
-                desc="Le système va parcourir le site 'boissonlacorniche.com' pour récupérer les URLs des images et les titres des produits. Chaque image sera téléchargée localement pour un affichage plus fluide lors du matching."
-                done={scrapeStatus === "done"}
-                statusEl={scrapeStatus === "running" ? (
-                  <span className="bg-[rgba(201,168,76,0.1)] text-[#c9a84c] border-1 border-[#8a6c2a] text-[9px] tracking-[1.5px] uppercase p-[2px_8px] rounded-[2px] font-mono inline-flex items-center gap-2">
-                    <span className="flex gap-1">
-                      <span className="w-1 h-1 bg-[#c9a84c] rounded-full animate-bounce [animation-delay:-0.3s]" />
-                      <span className="w-1 h-1 bg-[#c9a84c] rounded-full animate-bounce [animation-delay:-0.15s]" />
-                      <span className="w-1 h-1 bg-[#c9a84c] rounded-full animate-bounce" />
-                    </span>
-                    {scrapeCount} images capturées…
-                  </span>
-                ) : scrapeStatus === "done" && (
-                  <span className="bg-[#2d5a3d] text-[#4a9e6a] border-1 border-[#3a7a50] text-[9px] tracking-[0.15em] uppercase p-[2px_8px] rounded-[2px] font-mono">
-                    {scrapeCount} images en cache
-                  </span>
-                )}
-                actionEl={
-                  <button
-                    onClick={handleScrape}
-                    disabled={scrapeStatus === "running" || fakeProducts.length === 0}
-                    className="bg-transparent border-1 border-[#c9a84c] text-[#c9a84c] text-[11px] tracking-[0.1em] uppercase p-[9px_20px] rounded-[2px] cursor-pointer transition-all hover:bg-[#c9a84c] hover:text-[#0d0c0b] disabled:opacity-30 disabled:cursor-not-allowed font-mono"
-                  >
-                    {scrapeStatus === "running" ? "Scraping actif" : scrapeStatus === "done" ? "Relancer le scraping" : "Lancer l'extraction"}
-                  </button>
-                }
-              />
-            </div>
-          )}
-
           {/* ───────────── MATCH ───────────── */}
           {activeSection === "match" && (
             <div className="flex flex-col gap-8 fade-up">
               <div className="flex items-center gap-3 text-[#2a2520] text-[9px] tracking-[0.3em] uppercase after:content-[''] after:flex-1 after:h-[1px] after:bg-[#2a2520] font-mono">
-                Étape 03 — Algorithme de Liaison
+                Étape 02 — Recherche Multi-sites
               </div>
 
               <StepCard
-                num="3"
+                num="2"
                 title="Recherche d'images sur 5 sites (async)"
                 desc="Cette étape recherche uniquement les produits sans image sur plusieurs sites en parallèle. Faux positifs et résultats multiples sont autorisés, puis agrégés dans les résultats verbose. La recherche s'arrête tôt pour un produit dès que 2 images sont trouvées sur 2 sites différents."
                 done={multiResults.length > 0}
@@ -554,6 +470,23 @@ export default function App() {
                   </div>
                 }
               />
+
+              <div className="bg-[#181614] border-1 border-[#2a2520] rounded-[4px] p-5">
+                <div className="text-[10px] tracking-[0.15em] uppercase text-[#8a6c2a] font-mono mb-4">Sites analysés</div>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  {siteRows.map((row) => (
+                    <div key={row.site} className="bg-[#141210] border-1 border-[#2a2520] rounded-[2px] p-3 flex items-center justify-between gap-3">
+                      <div>
+                        <div className="text-[10px] text-[#e8dcc8] font-mono">{row.site}</div>
+                        <div className="text-[9px] text-[#5a5248] font-mono mt-1">{row.foundProducts} produits • {row.foundCandidates} candidats</div>
+                      </div>
+                      <span className={`text-[9px] tracking-[0.12em] uppercase border-1 rounded-[2px] p-[2px_8px] font-mono ${row.label === 'trouvé' ? 'bg-[#2d5a3d] text-[#4a9e6a] border-[#3a7a50]' : row.label === 'recherche…' ? 'bg-[rgba(201,168,76,0.1)] text-[#c9a84c] border-[#8a6c2a]' : row.label === 'avec erreurs' ? 'bg-[#5a2020] text-[#c05050] border-[#7a3030]' : 'bg-transparent text-[#5a5248] border-[#2a2520]'}`}>
+                        {row.label}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </div>
           )}
 
@@ -561,7 +494,7 @@ export default function App() {
           {activeSection === "results" && (
             <div className="flex flex-col gap-8 fade-up">
               <div className="flex items-center gap-3 text-[#2a2520] text-[9px] tracking-[0.3em] uppercase after:content-[''] after:flex-1 after:h-[1px] after:bg-[#2a2520] font-mono">
-                Étape 04 — Revue des résultats
+                Étape 03 — Revue des résultats
               </div>
 
               {/* Stats Bar */}
@@ -584,7 +517,7 @@ export default function App() {
               )}
 
               {/* Filters */}
-              {(matches.length > 0 || multiResults.length > 0) && (
+              {multiResults.length > 0 && (
                 <div className="flex flex-col md:flex-row justify-between items-center bg-[#141210] p-3 rounded-[3px] border-1 border-[#2a2520] gap-4">
                   <div className="flex gap-2">
                     {[
@@ -610,7 +543,7 @@ export default function App() {
                       className="bg-[#181614] border-1 border-[#2a2520] rounded-[2px] p-[8px_14px] font-mono text-[11px] text-[#d4c9b8] outline-none transition-colors focus:border-[#8a6c2a] w-full md:w-[280px]"
                     />
                     <div className="text-[9px] text-[#5a5248] tabular-nums font-mono whitespace-nowrap">
-                      {multiResults.length ? filteredMulti.length : filtered.length} ÉLÉMENTS
+                      {filteredMulti.length} ÉLÉMENTS
                     </div>
                   </div>
                 </div>
@@ -621,12 +554,6 @@ export default function App() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                   {filteredMulti.map((item) => (
                     <MultiSiteResultCard key={item.product?.id} item={item} />
-                  ))}
-                </div>
-              ) : filtered.length > 0 ? (
-                <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-                  {filtered.map((m) => (
-                    <MatchCard key={m.cave_product_id} match={m} />
                   ))}
                 </div>
               ) : (
@@ -651,14 +578,14 @@ export default function App() {
           )}
 
           {/* Empty Global State */}
-          {matches.length === 0 && multiResults.length === 0 && !loading.match && !loading.multi && activeSection === "results" && (
+          {multiResults.length === 0 && !loading.multi && activeSection === "results" && (
             <div className="flex flex-col items-center justify-center py-32 text-center fade-up">
               <div className="w-20 h-20 bg-[#181614] rounded-full flex items-center justify-center mb-6 border-1 border-[#2a2520] text-3xl font-serif italic text-[#c9a84c] shadow-2xl pulse">
                 ?
               </div>
               <h2 className="font-serif text-xl text-[#e8dcc8] mb-2 font-semibold">Aucune donnée de matching</h2>
               <p className="text-[11px] text-[#5a5248] max-w-[280px] font-mono leading-relaxed lowercase">
-                veuillez compléter les étapes 01 à 03 pour générer le rapport des correspondances.
+                veuillez compléter les étapes 01 à 02 pour générer le rapport des correspondances.
               </p>
             </div>
           )}
