@@ -181,7 +181,7 @@ export default function App() {
   const [fakeScrapeStatus, setFakeScrapeStatus] = useState("idle")
   const [fakeScrapeCount, setFakeScrapeCount] = useState(0)
   const [stats, setStats]                 = useState(null)
-  const [threshold, setThreshold]         = useState(60)
+  const [threshold, setThreshold]         = useState(70)
   const [filter, setFilter]               = useState("all") // all | matched | unmatched
   const [search, setSearch]               = useState("")
   const [loading, setLoading]             = useState({ fake: false, multi: false })
@@ -273,11 +273,12 @@ export default function App() {
     setLoading(prev => ({ ...prev, multi: true }))
     try {
       const q = new URLSearchParams({
-        min_raw_score: String(Math.max(20, threshold - 25)),
+        min_raw_score: String(Math.max(15, threshold - 40)),
         max_results_per_site: "6",
         max_product_concurrency: "8",
         max_http_concurrency: "40",
         max_site_query_concurrency: "6",
+        confidence_threshold: String(Math.max(70, threshold)),
         stop_after_two_sites: "true",
       })
       const r = await fetch(`${API}/api/multisite-search/start?${q.toString()}`, { method: "POST" })
@@ -470,7 +471,7 @@ export default function App() {
                         <span className="text-[#c9a84c] font-bold">{threshold}%</span>
                       </div>
                       <input
-                        type="range" min="40" max="95" value={threshold}
+                        type="range" min="70" max="95" value={threshold}
                         onChange={e => setThreshold(Number(e.target.value))}
                         className="w-full"
                       />

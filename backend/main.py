@@ -754,6 +754,7 @@ async def _search_product_across_sites(
     max_results_per_site: int,
     stop_after_two_sites: bool,
     max_site_query_concurrency: int,
+    confidence_threshold: int,
 ):
     start = time.time()
 
@@ -795,11 +796,12 @@ async def _search_product_across_sites(
                 agg, reasons = _compute_aggregated_score(product, cand)
                 cand["aggregated_score"] = agg
                 cand["aggregated_reasons"] = reasons
+                cand["is_confident"] = agg >= confidence_threshold
                 results.append(cand)
-                if cand.get("has_image"):
+                if cand.get("has_image") and cand.get("is_confident"):
                     sites_with_images.add(cand.get("site"))
 
-            image_count = sum(1 for c in results if c.get("has_image"))
+            image_count = sum(1 for c in results if c.get("has_image") and c.get("is_confident"))
             if stop_after_two_sites and len(sites_with_images) >= 2 and image_count >= 2:
                 stop_reason = "enough_cross_site_evidence"
                 for p in pending:
@@ -821,10 +823,20 @@ async def _search_product_across_sites(
     candidates = list(dedup.values())
     candidates.sort(key=lambda x: (x.get("has_image", False), x.get("aggregated_score", 0), x.get("raw_score", 0)), reverse=True)
 
+    confident_candidates = [
+        c for c in candidates
+        if c.get("is_confident") and c.get("has_image")
+    ]
+
     per_site = {}
-    for c in candidates:
+    for c in confident_candidates:
         per_site.setdefault(c["site"], 0)
         per_site[c["site"]] += 1
+
+    per_site_all = {}
+    for c in candidates:
+        per_site_all.setdefault(c["site"], 0)
+        per_site_all[c["site"]] += 1
 
     return {
         "product": {
@@ -837,12 +849,15 @@ async def _search_product_across_sites(
         },
         "timing_ms": int((time.time() - start) * 1000),
         "stop_reason": stop_reason,
+        "confidence_threshold": confidence_threshold,
         "searched_sites": list(SITE_CONNECTORS.keys()),
         "sites_with_images": sorted(list(sites_with_images)),
-        "candidates_count": len(candidates),
+        "candidates_count": len(confident_candidates),
+        "all_candidates_count": len(candidates),
         "per_site_counts": per_site,
+        "per_site_all_counts": per_site_all,
         "candidates": candidates,
-        "top_candidates": candidates[:3],
+        "top_candidates": confident_candidates[:3],
         "site_errors": site_errors,
     }
 
@@ -903,6 +918,7 @@ async def _run_multisite_search_task(options: dict):
                     max_results_per_site=options["max_results_per_site"],
                     stop_after_two_sites=options["stop_after_two_sites"],
                     max_site_query_concurrency=options["max_site_query_concurrency"],
+                    confidence_threshold=options["confidence_threshold"],
                 )
 
                 state["multi_site"]["results"].append(result)
@@ -941,6 +957,7 @@ async def start_multisite_search(
     max_product_concurrency: int = 8,
     max_http_concurrency: int = 40,
     max_site_query_concurrency: int = 6,
+    confidence_threshold: int = 70,
     max_products: int = 0,
     stop_after_two_sites: bool = True,
 ):
@@ -953,6 +970,7 @@ async def start_multisite_search(
         "max_product_concurrency": max(1, min(30, max_product_concurrency)),
         "max_http_concurrency": max(1, min(100, max_http_concurrency)),
         "max_site_query_concurrency": max(1, min(20, max_site_query_concurrency)),
+        "confidence_threshold": max(70, min(100, confidence_threshold)),
         "max_products": max_products if max_products > 0 else None,
         "stop_after_two_sites": bool(stop_after_two_sites),
     }
@@ -1009,6 +1027,8 @@ async def export_multisite_csv():
             "Requête",
             "Score Brut",
             "Score Agrégé",
+            "Confiant",
+            "Seuil Confiance",
             "Raisons Agrégation",
             "Stop Reason Produit",
             "Durée Produit (ms)",
@@ -1031,6 +1051,8 @@ async def export_multisite_csv():
                     "Requête": "",
                     "Score Brut": "",
                     "Score Agrégé": "",
+                    "Confiant": "",
+                    "Seuil Confiance": item.get("confidence_threshold"),
                     "Raisons Agrégation": "",
                     "Stop Reason Produit": item.get("stop_reason"),
                     "Durée Produit (ms)": item.get("timing_ms"),
@@ -1049,6 +1071,8 @@ async def export_multisite_csv():
                     "Requête": cand.get("query"),
                     "Score Brut": cand.get("raw_score"),
                     "Score Agrégé": cand.get("aggregated_score"),
+                    "Confiant": "oui" if cand.get("is_confident") else "non",
+                    "Seuil Confiance": item.get("confidence_threshold"),
                     "Raisons Agrégation": " | ".join(cand.get("aggregated_reasons", [])),
                     "Stop Reason Produit": item.get("stop_reason"),
                     "Durée Produit (ms)": item.get("timing_ms"),
@@ -1102,7 +1126,11 @@ async def export_multisite_top_images_zip():
                     key=lambda c: (c.get("has_image", False), c.get("aggregated_score", 0), c.get("raw_score", 0)),
                     reverse=True,
                 )
-                best = next((c for c in candidates_sorted if c.get("image_url")), None)
+                threshold = item.get("confidence_threshold", 70)
+                best = next((
+                    c for c in candidates_sorted
+                    if c.get("image_url") and c.get("aggregated_score", 0) >= threshold and c.get("is_confident")
+                ), None)
                 if not best:
                     continue
 
