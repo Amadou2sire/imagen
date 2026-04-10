@@ -4,6 +4,29 @@ Application SaaS de matching automatique d'images produits entre **la-cave-prive
 
 ## 🚀 Installation & Lancement
 
+## 🖥️ Lancement rapide avec IMEG (CLI)
+
+Un petit launcher est disponible à la racine pour démarrer le projet avec un menu CLI et une bannière ASCII "IMEG".
+
+```bash
+# Depuis la racine du projet
+./imeg
+```
+
+Modes directs :
+
+```bash
+./imeg all       # backend + frontend
+./imeg backend   # backend uniquement
+./imeg frontend  # frontend uniquement
+```
+
+Option alternative :
+
+```bash
+python3 imeg.py
+```
+
 ### 1. Backend (FastAPI)
 
 Le backend gère le scraping, la persistance des données et l'algorithme de matching.

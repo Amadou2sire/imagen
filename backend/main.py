@@ -9,7 +9,7 @@ import os, re, csv, asyncio, aiofiles, json
 from pathlib import Path
 import unicodedata
 import time
-from urllib.parse import quote_plus, urljoin
+from urllib.parse import quote_plus, urljoin, urlparse, parse_qs, urlencode, urlunparse
 import zipfile
 
 app = FastAPI(title="Image Matcher API")
@@ -28,7 +28,7 @@ app.mount("/corniche_images", StaticFiles(directory=str(IMAGES_DIR)), name="corn
 FAKE_IMAGE_URL = "https://www.la-cave-privee.com/assets/img/no-image.gif"
 CAVE_BASE = "https://www.la-cave-privee.com"
 CAVE_CATEGORIES = ["vins-importes", "spiritueux-importes", "vins-locaux", "champagnes", "vins-effervescents"]
-FAKE_SCRAPE_CONCURRENCY = 8
+FAKE_SCRAPE_CONCURRENCY = 4
 DATA_FILE = "data.json"
 
 # ─── Stockage et Persistance ────────────────────────────────────────────────
@@ -138,6 +138,138 @@ async def _scrape_fake_products_task():
     category_sem = asyncio.Semaphore(FAKE_SCRAPE_CONCURRENCY)
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
+    def _pick_first(node, selectors):
+        for sel in selectors:
+            found = node.select_one(sel)
+            if found:
+                return found
+        return None
+
+    def _normalize_product_url(raw_href: str) -> str:
+        if not raw_href:
+            return ""
+        full = raw_href if raw_href.startswith("http") else urljoin(CAVE_BASE, raw_href)
+        parsed = urlparse(full)
+        if parsed.netloc and "la-cave-privee.com" not in parsed.netloc:
+            return ""
+        return urlunparse((
+            parsed.scheme or "https",
+            parsed.netloc or urlparse(CAVE_BASE).netloc,
+            parsed.path.rstrip("/") or parsed.path or "/",
+            "",
+            "",
+            "",
+        ))
+
+    def _normalize_listing_url(raw_href: str, current_url: str) -> str:
+        if not raw_href:
+            return ""
+        full = raw_href if raw_href.startswith("http") else urljoin(current_url, raw_href)
+        parsed = urlparse(full)
+        if parsed.netloc and "la-cave-privee.com" not in parsed.netloc:
+            return ""
+        query = parse_qs(parsed.query)
+        filtered_query = {}
+        if query.get("page"):
+            filtered_query["page"] = [query["page"][0]]
+        return urlunparse((
+            parsed.scheme or "https",
+            parsed.netloc or urlparse(CAVE_BASE).netloc,
+            parsed.path,
+            "",
+            urlencode(filtered_query, doseq=True),
+            "",
+        ))
+
+    def _extract_category_slug_from_url(raw_href: str) -> str:
+        if not raw_href:
+            return ""
+        full = raw_href if raw_href.startswith("http") else urljoin(CAVE_BASE, raw_href)
+        parsed = urlparse(full)
+        if parsed.netloc and "la-cave-privee.com" not in parsed.netloc:
+            return ""
+        segments = [seg for seg in parsed.path.split("/") if seg]
+        if "products" not in segments:
+            return ""
+        product_idx = segments.index("products")
+        if product_idx <= 0:
+            return ""
+        slug = segments[product_idx - 1]
+        if slug in {"fr", "en", "products"}:
+            return ""
+        if not re.match(r"^[a-z0-9-]+$", slug):
+            return ""
+        return slug
+
+    def _extract_next_page_url(soup: BeautifulSoup, current_url: str, current_page: int) -> str:
+        next_link_selectors = [
+            "a[rel='next']",
+            ".pagination a.next",
+            ".pagination .next a",
+            "li.next a",
+            "a[aria-label*='Next']",
+            "a[aria-label*='Suivant']",
+            "a[title*='Next']",
+            "a[title*='Suivant']",
+            "a:-soup-contains('Suivant')",
+            "a:-soup-contains('Next')",
+        ]
+        for selector in next_link_selectors:
+            node = soup.select_one(selector)
+            if not node:
+                continue
+            href = node.get("href", "")
+            candidate = _normalize_listing_url(href, current_url)
+            if candidate:
+                return candidate
+
+        expected_next = current_page + 1
+        for node in soup.select("a[href]"):
+            label = node.get_text(" ", strip=True)
+            if label.isdigit() and int(label) == expected_next:
+                href = node.get("href", "")
+                candidate = _normalize_listing_url(href, current_url)
+                if candidate:
+                    return candidate
+
+        parsed = urlparse(current_url)
+        query = parse_qs(parsed.query)
+        query["page"] = [str(expected_next)]
+        return urlunparse((
+            parsed.scheme or "https",
+            parsed.netloc or urlparse(CAVE_BASE).netloc,
+            parsed.path,
+            "",
+            urlencode(query, doseq=True),
+            "",
+        ))
+
+    async def _discover_cave_categories(client: httpx.AsyncClient):
+        discovered = set(CAVE_CATEGORIES)
+        discovery_sources = [f"{CAVE_BASE}/sitemap.xml", f"{CAVE_BASE}/fr/", CAVE_BASE]
+
+        for source_url in discovery_sources:
+            try:
+                async with category_sem:
+                    resp = await client.get(source_url)
+                if resp.status_code != 200:
+                    continue
+                parser = "xml" if source_url.endswith(".xml") else "lxml"
+                soup = BeautifulSoup(resp.text, parser)
+                if parser == "xml":
+                    raw_links = [loc.get_text(strip=True) for loc in soup.select("loc")]
+                else:
+                    raw_links = [a.get("href", "") for a in soup.select("a[href]")]
+                for href in raw_links:
+                    slug = _extract_category_slug_from_url(href)
+                    if slug:
+                        discovered.add(slug)
+            except Exception as e:
+                async with state_lock:
+                    state["fake_scrape_errors"].append(f"category_discovery {source_url}: {e}")
+
+        return sorted(discovered)
+
     async def scrape_one_category(client: httpx.AsyncClient, cat_name: str):
         async def get_with_retry(url: str, retries: int = 3):
             last_err = None
@@ -158,10 +290,18 @@ async def _scrape_fake_products_task():
             raise last_err if last_err else RuntimeError(f"Echec requête {url}")
 
         page = 1
-        empty_pages_streak = 0
-        while True:
-            # URL structure: https://www.la-cave-privee.com/fr/{category}/products?page={page}
-            url = f"{CAVE_BASE}/fr/{cat_name}/products?page={page}"
+        pages_scanned = 0
+        max_pages = 250
+        next_page_url = f"{CAVE_BASE}/fr/{cat_name}/products?page=1"
+        visited_page_urls = set()
+        seen_page_signatures = set()
+
+        while next_page_url and pages_scanned < max_pages:
+            url = _normalize_listing_url(next_page_url, next_page_url)
+            if not url or url in visited_page_urls:
+                break
+            visited_page_urls.add(url)
+
             try:
                 resp = await get_with_retry(url)
 
@@ -175,35 +315,28 @@ async def _scrape_fake_products_task():
                 # Sélecteurs basés sur l'HTML fourni par l'utilisateur
                 products = soup.select(".item")
                 if not products:
-                    # Un page vide ponctuelle ne doit pas arrêter immédiatement tout le scan catégorie.
-                    empty_pages_streak += 1
-                    if empty_pages_streak <= 2:
-                        await asyncio.sleep(0.35)
-                        continue
+                    products = soup.select("article.product, li.product, .product-item")
+                if not products:
                     break
-                empty_pages_streak = 0
 
-                # On évite les boucles infinies de pagination si le site renvoie toujours la même page
-                if page > 100:
-                    break
+                signature_tokens = []
 
                 for p in products:
-                    img_tag = p.select_one(".img_pdt img")
-                    name_tag = p.select_one(".titre_pdt")
-                    link_tag = p.select_one(".img_pdt a")
+                    img_tag = _pick_first(p, [".img_pdt img", "img"])
+                    name_tag = _pick_first(p, [".titre_pdt", ".product-name", "h2", "h3", "a[title]", "a"])
+                    link_tag = _pick_first(p, [".img_pdt a", "a[href]"])
 
-                    if not img_tag or not name_tag:
+                    if not name_tag:
                         continue
 
                     product_name = name_tag.get_text(strip=True)
-                    product_url = link_tag["href"] if link_tag else ""
+                    raw_product_url = link_tag.get("href", "") if link_tag else ""
+                    full_product_url = _normalize_product_url(raw_product_url)
+                    if full_product_url:
+                        signature_tokens.append(f"{product_name}|{full_product_url}")
 
-                    # Déduction de la catégorie via l'URL (sm=...)
-                    category = "unknown"
-                    if "sm=" in product_url:
-                        category = product_url.split("sm=")[-1].split("&")[0]
-                    elif cat_name:
-                        category = cat_name
+                    if not img_tag:
+                        continue
 
                     img_src = img_tag.get("src", "") or img_tag.get("data-src", "")
 
@@ -212,7 +345,9 @@ async def _scrape_fake_products_task():
                     if "no-image.gif" not in img_src:
                         continue
 
-                    full_product_url = product_url if product_url.startswith("http") else CAVE_BASE + product_url
+                    if not full_product_url:
+                        continue
+
                     full_fake_img_url = img_src if img_src.startswith("http") else CAVE_BASE + img_src
 
                     async with state_lock:
@@ -224,12 +359,25 @@ async def _scrape_fake_products_task():
                         fake_products.append({
                             "id": len(fake_products) + 1,
                             "name": product_name,
-                            "category": category,
+                            "category": cat_name,
                             "url": full_product_url,
                             "fake_img_url": full_fake_img_url,
                         })
                         state["fake_scrape_count"] = len(fake_products)
 
+                # Détection de pagination défaillante: certaines pages reviennent identiques.
+                signature = f"{len(products)}::" + "|".join(sorted(signature_tokens)[:12])
+                if signature in seen_page_signatures:
+                    break
+                seen_page_signatures.add(signature)
+
+                pages_scanned += 1
+
+                next_candidate = _extract_next_page_url(soup, url, page)
+                if not next_candidate or next_candidate in visited_page_urls:
+                    break
+
+                next_page_url = next_candidate
                 page += 1
                 await asyncio.sleep(0.3)  # politeness delay
 
@@ -239,9 +387,16 @@ async def _scrape_fake_products_task():
                     state["fake_scrape_errors"].append(f"{cat_name} page {page}: {e}")
                 break
 
+        if pages_scanned >= max_pages:
+            async with state_lock:
+                state["fake_scrape_errors"].append(f"{cat_name}: max_pages atteint ({max_pages})")
+
     async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=30) as client:
+        categories_to_scan = await _discover_cave_categories(client)
+        if not categories_to_scan:
+            categories_to_scan = CAVE_CATEGORIES
         await asyncio.gather(
-            *(scrape_one_category(client, cat_name) for cat_name in CAVE_CATEGORIES),
+            *(scrape_one_category(client, cat_name) for cat_name in categories_to_scan),
             return_exceptions=True,
         )
     
