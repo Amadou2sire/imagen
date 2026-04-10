@@ -28,7 +28,7 @@ app.mount("/corniche_images", StaticFiles(directory=str(IMAGES_DIR)), name="corn
 FAKE_IMAGE_URL = "https://www.la-cave-privee.com/assets/img/no-image.gif"
 CAVE_BASE = "https://www.la-cave-privee.com"
 CAVE_CATEGORIES = ["vins-importes", "spiritueux-importes", "vins-locaux", "champagnes", "vins-effervescents"]
-FAKE_SCRAPE_CONCURRENCY = 5
+FAKE_SCRAPE_CONCURRENCY = 8
 DATA_FILE = "data.json"
 
 # ─── Stockage et Persistance ────────────────────────────────────────────────
@@ -994,9 +994,9 @@ async def start_multisite_search(
     background_tasks: BackgroundTasks,
     min_raw_score: int = 35,
     max_results_per_site: int = 6,
-    max_product_concurrency: int = 8,
-    max_http_concurrency: int = 40,
-    max_site_query_concurrency: int = 6,
+    max_product_concurrency: int = 12,
+    max_http_concurrency: int = 80,
+    max_site_query_concurrency: int = 10,
     confidence_threshold: int = 70,
     max_products: int = 0,
     stop_after_two_sites: bool = True,
@@ -1007,9 +1007,9 @@ async def start_multisite_search(
     options = {
         "min_raw_score": max(0, min(100, min_raw_score)),
         "max_results_per_site": max(1, min(20, max_results_per_site)),
-        "max_product_concurrency": max(1, min(30, max_product_concurrency)),
-        "max_http_concurrency": max(1, min(100, max_http_concurrency)),
-        "max_site_query_concurrency": max(1, min(20, max_site_query_concurrency)),
+        "max_product_concurrency": max(1, min(60, max_product_concurrency)),
+        "max_http_concurrency": max(1, min(300, max_http_concurrency)),
+        "max_site_query_concurrency": max(1, min(40, max_site_query_concurrency)),
         "confidence_threshold": max(70, min(100, confidence_threshold)),
         "max_products": max_products if max_products > 0 else None,
         "stop_after_two_sites": bool(stop_after_two_sites),

@@ -275,9 +275,9 @@ export default function App() {
       const q = new URLSearchParams({
         min_raw_score: String(Math.max(15, threshold - 40)),
         max_results_per_site: "6",
-        max_product_concurrency: "8",
-        max_http_concurrency: "40",
-        max_site_query_concurrency: "6",
+        max_product_concurrency: "12",
+        max_http_concurrency: "80",
+        max_site_query_concurrency: "10",
         confidence_threshold: String(Math.max(70, threshold)),
         stop_after_two_sites: "true",
       })
