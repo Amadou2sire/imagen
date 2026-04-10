@@ -37,12 +37,12 @@ function ImageBox({ src, label, isEmpty }) {
   const [err, setErr] = useState(false)
   return (
     <div className="flex flex-col gap-[6px]">
-      <div className="text-[8px] tracking-[0.2em] uppercase text-[#5a5248] font-mono">{label}</div>
+      <div className="text-[8px] tracking-[0.2em] uppercase text-white font-mono">{label}</div>
       <div className="aspect-square bg-[#0f0e0d] border-1 border-[#2a2520] rounded-[2px] overflow-hidden flex items-center justify-center relative">
         {!isEmpty && src && !err ? (
           <img src={src} alt={label} className="object-contain w-full h-full p-2" onError={() => setErr(true)} />
         ) : (
-          <div className="flex flex-col items-center gap-[4px] text-[#5a5248]">
+          <div className="flex flex-col items-center gap-[4px] text-white">
             <div className="text-xl opacity-40">{isEmpty ? "—" : "✕"}</div>
             <div className="text-[8px] tracking-[0.1em] text-center leading-tight">{isEmpty ? "aucune\ncorrespondance" : "indisponible"}</div>
           </div>
@@ -75,7 +75,7 @@ function MatchCard({ match }) {
 
       <div className="grid grid-cols-[1fr_28px_1fr] items-center p-3.5 pt-4">
         <ImageBox src={match.cave_fake_img} label="Actuelle (fake)" isEmpty={false} />
-        <div className="flex items-center justify-center text-[#5a5248] text-sm mt-3.5">→</div>
+        <div className="flex items-center justify-center text-white text-sm mt-3.5">→</div>
         <ImageBox
           src={isMatched ? `${API}${match.corniche_local_url}` : null}
           label={isMatched ? "Corniche" : "—"}
@@ -96,7 +96,7 @@ function MatchCard({ match }) {
           <div className="text-[10px] tabular-nums text-right min-w-[44px]" style={{ color: scoreColor(sc) }}>
             {sc}%
           </div>
-          <div className="text-[9px] text-[#5a5248] max-w-[120px] text-right truncate" title={match.corniche_product_name}>
+          <div className="text-[9px] text-white max-w-[120px] text-right truncate" title={match.corniche_product_name}>
             {match.corniche_product_name}
           </div>
         </div>
@@ -110,7 +110,7 @@ function StepCard({ num, title, desc, statusEl, actionEl, done }) {
     <div className="bg-[#181614] border-1 border-[#2a2520] rounded-[4px] fade-up shadow-lg">
       <div className="p-[18px_24px] border-b-1 border-b-[#2a2520] flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className={`w-7 h-7 rounded-[2px] flex items-center justify-center text-[11px] flex-shrink-0 transition-all ${done ? 'bg-[#2d5a3d] border-1 border-[#4a9e6a] text-[#4a9e6a]' : 'bg-transparent border-1 border-[#2a2520] text-[#5a5248]'}`}>
+          <div className={`w-7 h-7 rounded-[2px] flex items-center justify-center text-[11px] flex-shrink-0 transition-all ${done ? 'bg-[#2d5a3d] border-1 border-[#4a9e6a] text-[#4a9e6a]' : 'bg-transparent border-1 border-[#2a2520] text-white'}`}>
             {done ? "✓" : num}
           </div>
           <span className="font-serif text-sm text-[#e8dcc8]">{title}</span>
@@ -118,7 +118,7 @@ function StepCard({ num, title, desc, statusEl, actionEl, done }) {
         {statusEl}
       </div>
       <div className="p-6">
-        <p className="text-[11px] text-[#5a5248] mb-4 leading-[1.7] font-mono">{desc}</p>
+        <p className="text-[11px] text-white mb-4 leading-[1.7] font-mono">{desc}</p>
         {actionEl}
       </div>
     </div>
@@ -133,7 +133,7 @@ function MultiSiteResultCard({ item }) {
     <div className="bg-[#181614] border-1 border-[#2a2520] rounded-[3px] overflow-hidden">
       <div className="p-[12px_14px] border-b-1 border-b-[#2a2520]">
         <div className="text-[11px] text-[#e8dcc8] leading-[1.4]">{product.name}</div>
-        <div className="mt-1 flex items-center gap-2 text-[9px] text-[#5a5248] font-mono">
+        <div className="mt-1 flex items-center gap-2 text-[9px] text-white font-mono">
           <span>ID #{product.id}</span>
           <span>•</span>
           <span>{item.candidates_count || 0} candidats</span>
@@ -163,11 +163,11 @@ function MultiSiteResultCard({ item }) {
                   image ↗
                 </a>
               )}
-              <span className="text-[#5a5248]">raw {cand.raw_score || 0}%</span>
+              <span className="text-white">raw {cand.raw_score || 0}%</span>
             </div>
           </div>
         )) : (
-          <div className="text-[10px] text-[#5a5248] font-mono">Aucun candidat trouvé</div>
+          <div className="text-[10px] text-white font-mono">Aucun candidat trouvé</div>
         )}
       </div>
     </div>
@@ -356,7 +356,7 @@ export default function App() {
             onClick={() => setActiveSection(s.id)}
             className={`p-[16px_24px] border-b-1 border-b-[#2a2520] cursor-pointer transition-colors relative hover:bg-[rgba(201,168,76,0.04)] ${activeSection === s.id ? 'bg-[rgba(201,168,76,0.07)] before:content-[""] before:absolute before:left-0 before:top-0 before:bottom-0 before:w-[2px] before:bg-[#c9a84c]' : ''}`}
           >
-            <div className="text-[9px] tracking-[0.2em] uppercase text-[#5a5248] mb-1 font-mono">Étape {s.num}</div>
+            <div className="text-[9px] tracking-[0.2em] uppercase text-white mb-1 font-mono">Étape {s.num}</div>
             <div className="text-xs text-[#e8dcc8] font-normal font-mono">{s.name}</div>
             <div className="text-[10px] mt-[3px] font-mono" style={{
               color: s.status === "En attente" ? "var(--muted)" :
@@ -365,7 +365,7 @@ export default function App() {
           </div>
         ))}
 
-        <div className="mt-auto p-[20px_24px] border-t-1 border-t-[#2a2520] text-[9px] tracking-[0.1em] uppercase text-[#5a5248] font-mono">
+        <div className="mt-auto p-[20px_24px] border-t-1 border-t-[#2a2520] text-[9px] tracking-[0.1em] uppercase text-white font-mono">
           v1.0.0 — FastAPI + React<br />
           <span className="text-[#2a2520]">──────────────</span><br />
           Seuil : <span className="text-[#c9a84c] font-bold">{threshold}%</span>
@@ -399,7 +399,7 @@ export default function App() {
                 </button>
               </div>
             )}
-            <div className="flex items-center gap-1.5 text-[10px] text-[#5a5248] tracking-[0.1em] font-mono">
+            <div className="flex items-center gap-1.5 text-[10px] text-white tracking-[0.1em] font-mono">
               <div className={`w-1.5 h-1.5 rounded-full ${fakeScrapeStatus === 'done' ? 'bg-[#4a9e6a]' : (fakeScrapeStatus === 'running' || multiStatus === 'running') ? 'bg-[#c9a84c]' : 'bg-[#2a2520]'}`} />
               {fakeScrapeStatus === 'done' ? "backend connecté" : "en attente…"}
             </div>
@@ -465,7 +465,7 @@ export default function App() {
                 actionEl={
                   <div className="flex flex-col gap-6">
                     <div className="max-w-[320px]">
-                      <div className="flex justify-between text-[9px] mb-3 font-mono tracking-widest text-[#5a5248] uppercase">
+                      <div className="flex justify-between text-[9px] mb-3 font-mono tracking-widest text-white uppercase">
                         <span>Seuil de confiance</span>
                         <span className="text-[#c9a84c] font-bold">{threshold}%</span>
                       </div>
@@ -495,9 +495,9 @@ export default function App() {
                     <div key={row.site} className="bg-[#141210] border-1 border-[#2a2520] rounded-[2px] p-3 flex items-center justify-between gap-3">
                       <div>
                         <div className="text-[10px] text-[#e8dcc8] font-mono">{row.site}</div>
-                        <div className="text-[9px] text-[#5a5248] font-mono mt-1">{row.foundProducts} produits • {row.foundCandidates} candidats</div>
+                        <div className="text-[9px] text-white font-mono mt-1">{row.foundProducts} produits • {row.foundCandidates} candidats</div>
                       </div>
-                      <span className={`text-[9px] tracking-[0.12em] uppercase border-1 rounded-[2px] p-[2px_8px] font-mono ${row.label === 'trouvé' ? 'bg-[#2d5a3d] text-[#4a9e6a] border-[#3a7a50]' : row.label === 'recherche…' ? 'bg-[rgba(201,168,76,0.1)] text-[#c9a84c] border-[#8a6c2a]' : row.label === 'avec erreurs' ? 'bg-[#5a2020] text-[#c05050] border-[#7a3030]' : 'bg-transparent text-[#5a5248] border-[#2a2520]'}`}>
+                      <span className={`text-[9px] tracking-[0.12em] uppercase border-1 rounded-[2px] p-[2px_8px] font-mono ${row.label === 'trouvé' ? 'bg-[#2d5a3d] text-[#4a9e6a] border-[#3a7a50]' : row.label === 'recherche…' ? 'bg-[rgba(201,168,76,0.1)] text-[#c9a84c] border-[#8a6c2a]' : row.label === 'avec erreurs' ? 'bg-[#5a2020] text-[#c05050] border-[#7a3030]' : 'bg-transparent text-white border-[#2a2520]'}`}>
                         {row.label}
                       </span>
                     </div>
@@ -519,16 +519,16 @@ export default function App() {
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                   <div className="bg-[#181614] border-1 border-[#2a2520] rounded-[3px] p-5 flex flex-col gap-1">
                     <div className="font-serif text-3xl text-[#e8dcc8]">{stats.total}</div>
-                    <div className="text-[9px] tracking-[0.2em] uppercase text-[#5a5248] font-mono">Produits Fake</div>
+                    <div className="text-[9px] tracking-[0.2em] uppercase text-white font-mono">Produits Fake</div>
                   </div>
                   <div className="bg-[#181614] border-1 border-[#2a2520] rounded-[3px] p-5 flex flex-col gap-1">
                     <div className="font-serif text-3xl text-[#c9a84c]">{stats.matched}</div>
-                    <div className="text-[9px] tracking-[0.2em] uppercase text-[#5a5248] font-mono">Produits Avec Candidats</div>
+                    <div className="text-[9px] tracking-[0.2em] uppercase text-white font-mono">Produits Avec Candidats</div>
                     <div className="text-[10px] text-[#8a6c2a] mt-1 font-mono">{Math.round(stats.matched/stats.total*100)}% de réussite</div>
                   </div>
                   <div className="bg-[#181614] border-1 border-[#2a2520] rounded-[3px] p-5 flex flex-col gap-1">
                     <div className="font-serif text-3xl text-[#c05050]">{stats.unmatched}</div>
-                    <div className="text-[9px] tracking-[0.2em] uppercase text-[#5a5248] font-mono">Sans correspondance</div>
+                    <div className="text-[9px] tracking-[0.2em] uppercase text-white font-mono">Sans correspondance</div>
                   </div>
                 </div>
               )}
@@ -545,7 +545,7 @@ export default function App() {
                       <button
                         key={t.id}
                         onClick={() => setFilter(t.id)}
-                        className={`text-[10px] tracking-[0.12em] uppercase p-[6px_14px] border-1 border-[#2a2520] bg-transparent transition-all rounded-[2px] font-mono ${filter === t.id ? 'bg-[#c9a84c] text-[#0d0c0b] border-[#c9a84c]' : 'text-[#5a5248] hover:text-[#d4c9b8] hover:border-[#5a5248]'}`}
+                        className={`text-[10px] tracking-[0.12em] uppercase p-[6px_14px] border-1 border-[#2a2520] bg-transparent transition-all rounded-[2px] font-mono ${filter === t.id ? 'bg-[#c9a84c] text-white border-[#c9a84c]' : 'text-white hover:text-[#d4c9b8] hover:border-[#5a5248]'}`}
                       >
                         {t.label}
                       </button>
@@ -559,7 +559,7 @@ export default function App() {
                       onChange={e => setSearch(e.target.value)}
                       className="bg-[#181614] border-1 border-[#2a2520] rounded-[2px] p-[8px_14px] font-mono text-[11px] text-[#d4c9b8] outline-none transition-colors focus:border-[#8a6c2a] w-full md:w-[280px]"
                     />
-                    <div className="text-[9px] text-[#5a5248] tabular-nums font-mono whitespace-nowrap">
+                    <div className="text-[9px] text-white tabular-nums font-mono whitespace-nowrap">
                       {filteredMulti.length} ÉLÉMENTS
                     </div>
                   </div>
@@ -574,7 +574,7 @@ export default function App() {
                   ))}
                 </div>
               ) : (
-                <div className="text-center py-20 border-1 border-dashed border-[#2a2520] rounded-[4px] text-[#5a5248]">
+                <div className="text-center py-20 border-1 border-dashed border-[#2a2520] rounded-[4px] text-white">
                   <div className="text-2xl mb-2 opacity-30">🔍</div>
                   <div className="text-[10px] tracking-[0.1em] uppercase font-mono">Aucun résultat correspondant</div>
                 </div>
@@ -584,7 +584,7 @@ export default function App() {
                   <div className="text-[10px] tracking-[0.1em] uppercase text-[#c9a84c] font-mono mb-2">Erreurs collectées par site</div>
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                     {Object.entries(multiErrors).map(([site, errs]) => (
-                      <div key={site} className="text-[10px] text-[#5a5248] font-mono bg-[#181614] border-1 border-[#2a2520] rounded-[2px] p-2">
+                      <div key={site} className="text-[10px] text-white font-mono bg-[#181614] border-1 border-[#2a2520] rounded-[2px] p-2">
                         <span className="text-[#e8dcc8]">{site}</span> : {Array.isArray(errs) ? errs.length : 0}
                       </div>
                     ))}
@@ -601,7 +601,7 @@ export default function App() {
                 ?
               </div>
               <h2 className="font-serif text-xl text-[#e8dcc8] mb-2 font-semibold">Aucune donnée de matching</h2>
-              <p className="text-[11px] text-[#5a5248] max-w-[280px] font-mono leading-relaxed lowercase">
+              <p className="text-[11px] text-white max-w-[280px] font-mono leading-relaxed lowercase">
                 veuillez compléter les étapes 01 à 02 pour générer le rapport des correspondances.
               </p>
             </div>

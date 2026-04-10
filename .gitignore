@@ -11,6 +11,8 @@ backend/*.jpg
 backend/*.jpeg
 backend/*.png
 backend/*.webp
+backend/*.csv
+backend/*.zip
 
 # Frontend
 frontend/node_modules/
