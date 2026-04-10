@@ -38,6 +38,8 @@ state = {
     "matches": [],
     "fake_scrape_status": "idle",
     "fake_scrape_count": 0,
+    "fake_scrape_errors": [],
+    "fake_scrape_run_id": None,
     "scrape_status": "idle",
     "match_status": "idle",
     "multi_site": {
@@ -125,8 +127,11 @@ def safe_filename(name: str, ext: str = ".jpg") -> str:
 # ─── Endpoint 1 : Produits avec image fake ───────────────────────────────────
 
 async def _scrape_fake_products_task():
+    run_id = f"fake-{int(time.time())}"
+    state["fake_scrape_run_id"] = run_id
     state["fake_scrape_status"] = "running"
     state["fake_scrape_count"] = 0
+    state["fake_scrape_errors"] = []
     fake_products = []
     seen_urls = set() # Pour éviter les doublons entre catégories
     state_lock = asyncio.Lock()
@@ -134,15 +139,35 @@ async def _scrape_fake_products_task():
     headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"}
 
     async def scrape_one_category(client: httpx.AsyncClient, cat_name: str):
+        async def get_with_retry(url: str, retries: int = 3):
+            last_err = None
+            for attempt in range(1, retries + 1):
+                try:
+                    async with category_sem:
+                        resp = await client.get(url)
+                    # Retry transient HTTP statuses often seen with anti-bot or temporary overload.
+                    if resp.status_code in {429, 500, 502, 503, 504} and attempt < retries:
+                        await asyncio.sleep(0.4 * attempt)
+                        continue
+                    return resp
+                except Exception as e:
+                    last_err = e
+                    if attempt < retries:
+                        await asyncio.sleep(0.4 * attempt)
+                        continue
+            raise last_err if last_err else RuntimeError(f"Echec requête {url}")
+
         page = 1
+        empty_pages_streak = 0
         while True:
             # URL structure: https://www.la-cave-privee.com/fr/{category}/products?page={page}
             url = f"{CAVE_BASE}/fr/{cat_name}/products?page={page}"
             try:
-                async with category_sem:
-                    resp = await client.get(url)
+                resp = await get_with_retry(url)
 
                 if resp.status_code != 200:
+                    async with state_lock:
+                        state["fake_scrape_errors"].append(f"{cat_name} page {page}: HTTP {resp.status_code}")
                     break
 
                 soup = BeautifulSoup(resp.text, "lxml")
@@ -150,7 +175,13 @@ async def _scrape_fake_products_task():
                 # Sélecteurs basés sur l'HTML fourni par l'utilisateur
                 products = soup.select(".item")
                 if not products:
+                    # Un page vide ponctuelle ne doit pas arrêter immédiatement tout le scan catégorie.
+                    empty_pages_streak += 1
+                    if empty_pages_streak <= 2:
+                        await asyncio.sleep(0.35)
+                        continue
                     break
+                empty_pages_streak = 0
 
                 # On évite les boucles infinies de pagination si le site renvoie toujours la même page
                 if page > 100:
@@ -204,26 +235,35 @@ async def _scrape_fake_products_task():
 
             except Exception as e:
                 print(f"Erreur catégorie {cat_name} page {page}: {e}")
+                async with state_lock:
+                    state["fake_scrape_errors"].append(f"{cat_name} page {page}: {e}")
                 break
 
     async with httpx.AsyncClient(headers=headers, follow_redirects=True, timeout=30) as client:
-        await asyncio.gather(*(scrape_one_category(client, cat_name) for cat_name in CAVE_CATEGORIES))
+        await asyncio.gather(
+            *(scrape_one_category(client, cat_name) for cat_name in CAVE_CATEGORIES),
+            return_exceptions=True,
+        )
     
     state["fake_products"] = fake_products
-    state["fake_scrape_status"] = "done"
+    state["fake_scrape_status"] = "done" if fake_products else "error"
     save_state()
     print(f"✅ Détection terminée : {len(fake_products)} produits sans image identifiés")
 
 @app.post("/api/fake-products")
 async def start_fake_products_scrape(background_tasks: BackgroundTasks):
+    if state["fake_scrape_status"] == "running":
+        return {"status": "already_running", "run_id": state.get("fake_scrape_run_id")}
     background_tasks.add_task(_scrape_fake_products_task)
-    return {"status": "started"}
+    return {"status": "started", "run_id": state.get("fake_scrape_run_id")}
 
 @app.get("/api/fake-products-status")
 async def get_fake_products_status():
     return {
         "status": state["fake_scrape_status"],
-        "count": state["fake_scrape_count"]
+        "count": state["fake_scrape_count"],
+        "run_id": state.get("fake_scrape_run_id"),
+        "errors_count": len(state.get("fake_scrape_errors", [])),
     }
 
 @app.get("/api/fake-products-get")
