@@ -297,11 +297,11 @@ export default function App() {
     setLoading(prev => ({ ...prev, multi: true }))
     try {
       const q = new URLSearchParams({
-        min_raw_score: String(Math.max(15, threshold - 40)),
-        max_results_per_site: "6",
-        max_product_concurrency: "12",
-        max_http_concurrency: "80",
-        max_site_query_concurrency: "10",
+        min_raw_score: String(Math.max(10, threshold - 45)),
+        max_results_per_site: "8",
+        max_product_concurrency: "30",
+        max_http_concurrency: "220",
+        max_site_query_concurrency: "30",
         confidence_threshold: String(Math.max(70, threshold)),
         stop_after_two_sites: "true",
       })
