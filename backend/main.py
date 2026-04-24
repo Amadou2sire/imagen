@@ -30,10 +30,10 @@ CAVE_BASE = "https://www.la-cave-privee.com"
 CAVE_CATEGORIES = ["vins-importes", "spiritueux-importes", "vins-locaux", "champagnes", "vins-effervescents"]
 FAKE_SCRAPE_CONCURRENCY = 12
 MULTISITE_DEFAULT_MIN_RAW_SCORE = 25
-MULTISITE_DEFAULT_MAX_RESULTS_PER_SITE = 8
-MULTISITE_DEFAULT_MAX_PRODUCT_CONCURRENCY = 30
-MULTISITE_DEFAULT_MAX_HTTP_CONCURRENCY = 220
-MULTISITE_DEFAULT_MAX_SITE_QUERY_CONCURRENCY = 30
+MULTISITE_DEFAULT_MAX_RESULTS_PER_SITE = 10
+MULTISITE_DEFAULT_MAX_PRODUCT_CONCURRENCY = 60
+MULTISITE_DEFAULT_MAX_HTTP_CONCURRENCY = 400
+MULTISITE_DEFAULT_MAX_SITE_QUERY_CONCURRENCY = 60
 DATA_FILE = "data.json"
 
 # ─── Stockage et Persistance ────────────────────────────────────────────────
@@ -1315,10 +1315,10 @@ async def start_multisite_search(
 
     options = {
         "min_raw_score": max(0, min(100, min_raw_score)),
-        "max_results_per_site": max(1, min(20, max_results_per_site)),
-        "max_product_concurrency": max(1, min(120, max_product_concurrency)),
-        "max_http_concurrency": max(1, min(500, max_http_concurrency)),
-        "max_site_query_concurrency": max(1, min(60, max_site_query_concurrency)),
+        "max_results_per_site": max(1, min(30, max_results_per_site)),
+        "max_product_concurrency": max(1, min(200, max_product_concurrency)),
+        "max_http_concurrency": max(1, min(800, max_http_concurrency)),
+        "max_site_query_concurrency": max(1, min(120, max_site_query_concurrency)),
         "confidence_threshold": max(70, min(100, confidence_threshold)),
         "max_products": max_products if max_products > 0 else None,
         "stop_after_two_sites": bool(stop_after_two_sites),
