@@ -6,6 +6,7 @@ import httpx
 from bs4 import BeautifulSoup
 from rapidfuzz import fuzz, process
 import os, re, csv, asyncio, aiofiles, json
+import io
 from pathlib import Path
 import unicodedata
 import time
@@ -1443,6 +1444,8 @@ async def export_multisite_top_images_zip():
     zip_path = Path("export_multisite_top_images.zip")
     used_names = {}
     downloaded = 0
+    manifest_rows = []
+    selected_rows = []
 
     def infer_ext(image_url: str, content_type: str) -> str:
         ext = Path(image_url.split("?")[0]).suffix.lower()
@@ -1468,6 +1471,7 @@ async def export_multisite_top_images_zip():
             for item in ms["results"]:
                 product = item.get("product", {})
                 product_name = product.get("name") or "produit"
+                cave_url = product.get("source_url") or product.get("url") or ""
 
                 candidates = item.get("candidates", [])
                 candidates_sorted = sorted(
@@ -1480,34 +1484,100 @@ async def export_multisite_top_images_zip():
                     c for c in candidates_sorted
                     if c.get("image_url") and c.get("aggregated_score", 0) >= threshold and c.get("is_confident")
                 ), None)
-                if not best:
-                    continue
 
-                image_url = best.get("image_url")
-                if not image_url:
-                    continue
+                for cand in candidates_sorted:
+                    manifest_rows.append({
+                        "ID Produit Cave": product.get("id"),
+                        "Nom Produit Cave": product_name,
+                        "URL Produit Cave": cave_url,
+                        "Site": cand.get("site"),
+                        "Nom Trouvé": cand.get("found_name") or "",
+                        "URL Page Trouvée": cand.get("page_url") or "",
+                        "URL Image": cand.get("image_url") or "",
+                        "Score Brut": cand.get("raw_score", 0),
+                        "Score Agrégé": cand.get("aggregated_score", 0),
+                        "Confiant": "oui" if cand.get("is_confident") else "non",
+                        "Sélection Finale": "oui" if best and cand.get("image_url") == best.get("image_url") and cand.get("page_url") == best.get("page_url") else "non",
+                    })
 
-                try:
-                    resp = await client.get(image_url)
-                    if resp.status_code != 200 or not resp.content:
-                        continue
+                if best:
+                    selected_rows.append({
+                        "ID Produit Cave": product.get("id"),
+                        "Nom Produit Cave": product_name,
+                        "URL Produit Cave": cave_url,
+                        "Site": best.get("site") or "",
+                        "Nom Trouvé": best.get("found_name") or "",
+                        "URL Page Trouvée": best.get("page_url") or "",
+                        "URL Image": best.get("image_url") or "",
+                        "Score Brut": best.get("raw_score", 0),
+                        "Score Agrégé": best.get("aggregated_score", 0),
+                    })
 
-                    ext = infer_ext(image_url, resp.headers.get("content-type", ""))
-                    base_name = safe_filename(product_name, "") or "produit"
+                    image_url = best.get("image_url")
+                    if image_url:
+                        try:
+                            resp = await client.get(image_url)
+                            if resp.status_code != 200 or not resp.content:
+                                continue
 
-                    if base_name in used_names:
-                        used_names[base_name] += 1
-                        final_name = f"{base_name}_{used_names[base_name]}{ext}"
-                    else:
-                        used_names[base_name] = 1
-                        final_name = f"{base_name}{ext}"
+                            ext = infer_ext(image_url, resp.headers.get("content-type", ""))
+                            base_name = safe_filename(product_name, "") or "produit"
 
-                    zip_file.writestr(final_name, resp.content)
-                    downloaded += 1
+                            if base_name in used_names:
+                                used_names[base_name] += 1
+                                final_name = f"{base_name}_{used_names[base_name]}{ext}"
+                            else:
+                                used_names[base_name] = 1
+                                final_name = f"{base_name}{ext}"
 
-                except Exception as e:
-                    print(f"Erreur ZIP image {image_url}: {e}")
-                    continue
+                            zip_file.writestr(final_name, resp.content)
+                            downloaded += 1
+
+                        except Exception as e:
+                            print(f"Erreur ZIP image {image_url}: {e}")
+                            continue
+
+            if manifest_rows:
+                manifest_buffer = io.StringIO()
+                manifest_writer = csv.DictWriter(
+                    manifest_buffer,
+                    fieldnames=[
+                        "ID Produit Cave",
+                        "Nom Produit Cave",
+                        "URL Produit Cave",
+                        "Site",
+                        "Nom Trouvé",
+                        "URL Page Trouvée",
+                        "URL Image",
+                        "Score Brut",
+                        "Score Agrégé",
+                        "Confiant",
+                        "Sélection Finale",
+                    ],
+                )
+                manifest_writer.writeheader()
+                manifest_writer.writerows(manifest_rows)
+                zip_file.writestr("links_all_candidates.csv", manifest_buffer.getvalue())
+
+            if selected_rows:
+                selected_buffer = io.StringIO()
+                selected_writer = csv.DictWriter(
+                    selected_buffer,
+                    fieldnames=[
+                        "ID Produit Cave",
+                        "Nom Produit Cave",
+                        "URL Produit Cave",
+                        "Site",
+                        "Nom Trouvé",
+                        "URL Page Trouvée",
+                        "URL Image",
+                        "Score Brut",
+                        "Score Agrégé",
+                    ],
+                )
+                selected_writer.writeheader()
+                selected_writer.writerows(selected_rows)
+                zip_file.writestr("links_selected_peak_confidence.csv", selected_buffer.getvalue())
 
     if downloaded == 0:
         return JSONResponse(status_code=400, content={"error": "Aucune image téléchargeable trouvée"})
