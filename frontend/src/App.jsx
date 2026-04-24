@@ -13,6 +13,9 @@ const TARGET_SITES = [
   "oenovinia.com",
   "showroomprive.com",
   "veepee.com",
+  "vente-exclusive.com",
+  "privalia.com",
+  "eboutic.ch",
   "vinatis.com",
   "nicolas.com",
   "lavinia.com",
@@ -32,6 +35,40 @@ const TARGET_SITES = [
   "bazarchic.com",
   "1clic1cave.fr",
 ]
+
+const SITE_PARENT_GROUPS = {
+  "nicolas.com": "Groupe Castel",
+  "vinatis.com": "Groupe Castel",
+  "veepee.com": "Groupe Veepee / Holding Oredis",
+  "vente-exclusive.com": "Groupe Veepee / Holding Oredis",
+  "privalia.com": "Groupe Veepee / Holding Oredis",
+  "eboutic.ch": "Groupe Veepee / Holding Oredis",
+  "showroomprive.com": "SRP Groupe",
+  "wineandco.com": "COFEPP",
+  "millesima.com": "Millesima",
+  "lavinia.com": "Famille Servant",
+  "ventealapropriete.com": "Indépendant",
+  "leclos-prive.com": "Indépendant",
+  "v2vin.com": "Indépendant",
+  "oenovinia.com": "Indépendant",
+  "legroscaviste.com": "Indépendant",
+  "lilovino.com": "Indépendant",
+  "twil.fr": "Indépendant",
+  "sommelleriedefrance.com": "Indépendant",
+  "cave-spirituelle.com": "Indépendant",
+  "idealwine.com": "Indépendant",
+  "1jour1vin.com": "Indépendant",
+  "1clic1cave.fr": "Indépendant",
+  "boissonlacorniche.com": "Indépendant",
+  "boissonsdumonde.fr": "Indépendant",
+  "my-alco-shop.com": "Indépendant",
+  "geantdrive.tn": "Indépendant",
+  "whisky.fr": "Indépendant",
+  "thecave.fr": "Indépendant",
+  "winesearcher.com": "Indépendant",
+  "vivino.com": "Indépendant",
+  "bazarchic.com": "Indépendant",
+}
 
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -352,13 +389,14 @@ export default function App() {
     const foundProducts = multiResults.reduce((acc, item) => acc + ((item.per_site_counts?.[site] || 0) > 0 ? 1 : 0), 0)
     const foundCandidates = multiResults.reduce((acc, item) => acc + (item.per_site_counts?.[site] || 0), 0)
     const errorsCount = Array.isArray(multiErrors?.[site]) ? multiErrors[site].length : 0
+    const parentGroup = SITE_PARENT_GROUPS[site] || "Indépendant"
 
     let label = "en attente"
     if (multiStatus === "running") label = "recherche…"
     if (multiResults.length > 0) label = foundProducts > 0 ? "trouvé" : "rien trouvé"
     if (errorsCount > 0 && foundProducts === 0) label = "avec erreurs"
 
-    return { site, foundProducts, foundCandidates, errorsCount, label }
+    return { site, parentGroup, foundProducts, foundCandidates, errorsCount, label }
   })
 
   return (
@@ -520,6 +558,7 @@ export default function App() {
                     <div key={row.site} className="bg-[#141210] border-1 border-[#2a2520] rounded-[2px] p-3 flex items-center justify-between gap-3">
                       <div>
                         <div className="text-[10px] text-[#e8dcc8] font-mono">{row.site}</div>
+                        <div className="text-[9px] text-[#8a6c2a] font-mono mt-0.5">{row.parentGroup}</div>
                         <div className="text-[9px] text-white font-mono mt-1">{row.foundProducts} produits • {row.foundCandidates} candidats</div>
                       </div>
                       <span className={`text-[9px] tracking-[0.12em] uppercase border-1 rounded-[2px] p-[2px_8px] font-mono ${row.label === 'trouvé' ? 'bg-[#2d5a3d] text-[#4a9e6a] border-[#3a7a50]' : row.label === 'recherche…' ? 'bg-[rgba(201,168,76,0.1)] text-[#c9a84c] border-[#8a6c2a]' : row.label === 'avec erreurs' ? 'bg-[#5a2020] text-[#c05050] border-[#7a3030]' : 'bg-transparent text-white border-[#2a2520]'}`}>

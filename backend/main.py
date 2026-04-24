@@ -687,6 +687,40 @@ DEFAULT_SITE_SEARCH_PATHS = [
     "/recherche?q={q}",
 ]
 
+SITE_PARENT_GROUPS = {
+    "nicolas.com": "Groupe Castel",
+    "vinatis.com": "Groupe Castel",
+    "veepee.com": "Groupe Veepee / Holding Oredis",
+    "vente-exclusive.com": "Groupe Veepee / Holding Oredis",
+    "privalia.com": "Groupe Veepee / Holding Oredis",
+    "eboutic.ch": "Groupe Veepee / Holding Oredis",
+    "showroomprive.com": "SRP Groupe",
+    "wineandco.com": "COFEPP",
+    "millesima.com": "Millesima",
+    "lavinia.com": "Famille Servant",
+    "ventealapropriete.com": "Indépendant",
+    "leclos-prive.com": "Indépendant",
+    "v2vin.com": "Indépendant",
+    "oenovinia.com": "Indépendant",
+    "legroscaviste.com": "Indépendant",
+    "lilovino.com": "Indépendant",
+    "twil.fr": "Indépendant",
+    "sommelleriedefrance.com": "Indépendant",
+    "cave-spirituelle.com": "Indépendant",
+    "idealwine.com": "Indépendant",
+    "1jour1vin.com": "Indépendant",
+    "1clic1cave.fr": "Indépendant",
+    "boissonlacorniche.com": "Indépendant",
+    "boissonsdumonde.fr": "Indépendant",
+    "my-alco-shop.com": "Indépendant",
+    "geantdrive.tn": "Indépendant",
+    "whisky.fr": "Indépendant",
+    "thecave.fr": "Indépendant",
+    "winesearcher.com": "Indépendant",
+    "vivino.com": "Indépendant",
+    "bazarchic.com": "Indépendant",
+}
+
 SITE_CONNECTORS = {
     "ceptunes.com": {
         "base": "https://ceptunes.com",
@@ -748,6 +782,18 @@ SITE_CONNECTORS = {
     },
     "veepee.com": {
         "base": "https://www.veepee.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "vente-exclusive.com": {
+        "base": "https://www.vente-exclusive.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "privalia.com": {
+        "base": "https://www.privalia.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "eboutic.ch": {
+        "base": "https://www.eboutic.ch",
         "search_paths": DEFAULT_SITE_SEARCH_PATHS,
     },
     "vinatis.com": {
