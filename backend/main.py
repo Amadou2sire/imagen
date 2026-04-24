@@ -675,6 +675,13 @@ async def export_csv():
 
 # ─── Multi-site Async Search (Verbose) ──────────────────────────────────────
 
+DEFAULT_SITE_SEARCH_PATHS = [
+    "/?s={q}",
+    "/search?q={q}",
+    "/search/{q}",
+    "/recherche?q={q}",
+]
+
 SITE_CONNECTORS = {
     "ceptunes.com": {
         "base": "https://ceptunes.com",
@@ -713,6 +720,102 @@ SITE_CONNECTORS = {
             "/search/{q}",
             "/boutique/?s={q}",
         ],
+    },
+    "ventealapropriete.com": {
+        "base": "https://www.ventealapropriete.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "leclos-prive.com": {
+        "base": "https://www.leclos-prive.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "v2vin.com": {
+        "base": "https://www.v2vin.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "oenovinia.com": {
+        "base": "https://www.oenovinia.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "showroomprive.com": {
+        "base": "https://www.showroomprive.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "veepee.com": {
+        "base": "https://www.veepee.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "vinatis.com": {
+        "base": "https://www.vinatis.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "nicolas.com": {
+        "base": "https://www.nicolas.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "lavinia.com": {
+        "base": "https://www.lavinia.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "legroscaviste.com": {
+        "base": "https://www.legroscaviste.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "lilovino.com": {
+        "base": "https://www.lilovino.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "wineandco.com": {
+        "base": "https://www.wineandco.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "twil.fr": {
+        "base": "https://www.twil.fr",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "sommelleriedefrance.com": {
+        "base": "https://www.sommelleriedefrance.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "cave-spirituelle.com": {
+        "base": "https://www.cave-spirituelle.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "whisky.fr": {
+        "base": "https://www.whisky.fr",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "thecave.fr": {
+        "base": "https://www.thecave.fr",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "idealwine.com": {
+        "base": "https://www.idealwine.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "millesima.com": {
+        "base": "https://www.millesima.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "1jour1vin.com": {
+        "base": "https://www.1jour1vin.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "winesearcher.com": {
+        "base": "https://www.winesearcher.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "vivino.com": {
+        "base": "https://www.vivino.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "bazarchic.com": {
+        "base": "https://www.bazarchic.com",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
+    },
+    "1clic1cave.fr": {
+        "base": "https://www.1clic1cave.fr",
+        "search_paths": DEFAULT_SITE_SEARCH_PATHS,
     },
 }
 
