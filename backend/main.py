@@ -1587,3 +1587,79 @@ async def export_multisite_top_images_zip():
         media_type="application/zip",
         filename="top_images_lacave.zip",
     )
+
+
+@app.get("/api/multisite-search/export-missing-links-csv")
+async def export_multisite_missing_links_csv():
+    ms = state["multi_site"]
+    if not ms.get("results"):
+        return JSONResponse(status_code=400, content={"error": "Aucun résultat multi-site disponible"})
+
+    csv_path = Path("export_multisite_missing_links.csv")
+
+    with open(csv_path, "w", newline="", encoding="utf-8-sig") as f:
+        fieldnames = [
+            "ID Produit Cave",
+            "Nom Produit Cave",
+            "URL Produit Cave",
+            "Statut",
+            "Nombre Candidats",
+            "Lien Peak Confiance Site",
+            "Lien Peak Confiance Nom",
+            "Lien Peak Confiance Page",
+            "Lien Peak Confiance Image",
+            "Score Peak Confiance",
+            "Tous les Candidats",
+        ]
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+
+        for item in ms["results"]:
+            product = item.get("product", {})
+            candidates = item.get("candidates", [])
+            candidates_sorted = sorted(
+                candidates,
+                key=lambda c: (c.get("has_image", False), c.get("aggregated_score", 0), c.get("raw_score", 0)),
+                reverse=True,
+            )
+            threshold = item.get("confidence_threshold", 70)
+            peak = candidates_sorted[0] if candidates_sorted else None
+            selected = next((
+                c for c in candidates_sorted
+                if c.get("image_url") and c.get("aggregated_score", 0) >= threshold and c.get("is_confident")
+            ), None)
+
+            if selected:
+                continue
+
+            candidate_links = []
+            for cand in candidates_sorted:
+                candidate_links.append(
+                    " | ".join([
+                        f"site={cand.get('site') or ''}",
+                        f"name={cand.get('found_name') or ''}",
+                        f"page={cand.get('page_url') or ''}",
+                        f"image={cand.get('image_url') or ''}",
+                        f"score={cand.get('aggregated_score', 0)}",
+                    ])
+                )
+
+            writer.writerow({
+                "ID Produit Cave": product.get("id"),
+                "Nom Produit Cave": product.get("name"),
+                "URL Produit Cave": product.get("source_url"),
+                "Statut": "sans correspondance finale",
+                "Nombre Candidats": len(candidates_sorted),
+                "Lien Peak Confiance Site": peak.get("site") if peak else "",
+                "Lien Peak Confiance Nom": peak.get("found_name") if peak else "",
+                "Lien Peak Confiance Page": peak.get("page_url") if peak else "",
+                "Lien Peak Confiance Image": peak.get("image_url") if peak else "",
+                "Score Peak Confiance": peak.get("aggregated_score") if peak else "",
+                "Tous les Candidats": " || ".join(candidate_links),
+            })
+
+    return FileResponse(
+        path=str(csv_path),
+        media_type="text/csv",
+        filename="missing_images_links.csv",
+    )

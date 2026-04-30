@@ -377,6 +377,14 @@ export default function App() {
     window.open(`${API}/api/multisite-search/export-top-images-zip`, "_blank")
   }
 
+  const handleExportMissingLinks = () => {
+    if (!multiResults.length) {
+      showToast("Veuillez d'abord lancer la recherche multi-sites", "error")
+      return
+    }
+    window.open(`${API}/api/multisite-search/export-missing-links-csv`, "_blank")
+  }
+
   const filteredMulti = multiResults.filter(item => {
     const productName = (item.product?.name || "").toLowerCase()
     if (search && !productName.includes(search.toLowerCase())) return false
@@ -459,6 +467,12 @@ export default function App() {
                   className="bg-transparent border-1 border-[#4a9e6a] text-[#4a9e6a] text-[11px] tracking-[0.1em] uppercase p-[9px_16px] rounded-[2px] cursor-pointer transition-all hover:bg-[#4a9e6a] hover:text-[#0d0c0b] disabled:opacity-30 font-mono"
                 >
                   ↓ ZIP TOP IMAGES
+                </button>
+                <button
+                  onClick={handleExportMissingLinks}
+                  className="bg-transparent border-1 border-[#8a6c2a] text-[#8a6c2a] text-[11px] tracking-[0.1em] uppercase p-[9px_16px] rounded-[2px] cursor-pointer transition-all hover:bg-[#8a6c2a] hover:text-[#0d0c0b] disabled:opacity-30 font-mono"
+                >
+                  ↓ MISSING LINKS CSV
                 </button>
               </div>
             )}
